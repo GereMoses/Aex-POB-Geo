@@ -449,7 +449,20 @@ async def list_notifications(
                    is_read, read_at, link, created_at
             FROM sys_notifications
             WHERE {where_sql}
-            ORDER BY is_read ASC, priority DESC, created_at DESC
+            -- priority is TEXT, so `priority DESC` sorted it alphabetically:
+            -- medium > low > high > critical. That put CRITICAL alerts at the
+            -- BOTTOM of the bell and ranked 'low' above 'high' — during an
+            -- emergency the one notification that mattered was last. Rank it
+            -- explicitly instead.
+            ORDER BY is_read ASC,
+                     CASE lower(priority)
+                         WHEN 'critical' THEN 0
+                         WHEN 'high'     THEN 1
+                         WHEN 'medium'   THEN 2
+                         WHEN 'low'      THEN 3
+                         ELSE 4
+                     END,
+                     created_at DESC
             LIMIT :limit OFFSET :offset
         """), params).fetchall()
 

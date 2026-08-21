@@ -248,6 +248,21 @@ class MusteringService:
                     event.id, sms=notify_sms, email=notify_email, whatsapp=notify_whatsapp
                 )
 
+            # Raise an IN-APP alert as well. Personnel get email/SMS, but anyone
+            # already signed into ApexPOB and not sitting on the Mustering screen
+            # previously had no indication at all that a muster was running — the
+            # notification bell stayed silent through a General Platform Alarm.
+            try:
+                self._raise_muster_notification(event, event_type, total_expected, muster_zone_ids)
+            except Exception as note_err:
+                # Never let the alert banner break an activation that has already
+                # committed — the muster itself is what matters.
+                logger.warning(f"Could not raise in-app muster notification: {note_err}")
+                try:
+                    self.db.rollback()
+                except Exception:
+                    pass
+
             return {
                 "event_id": event.id,
                 "zone_ids": zone_ids,
@@ -347,6 +362,48 @@ class MusteringService:
             self.db.rollback()
             raise
     
+    _EVENT_TYPE_LABELS = {0: "Emergency", 1: "Drill", 2: "FIRE", 3: "GAS", 4: "MAN DOWN"}
+
+    def _raise_muster_notification(self, event, event_type, total_expected, muster_zone_ids):
+        """Put an active muster in the notification bell and on the live stream."""
+        label = self._EVENT_TYPE_LABELS.get(event_type, "Emergency")
+        points = []
+        if muster_zone_ids:
+            points = [
+                z.name for z in self.db.query(Zone).filter(Zone.id.in_(muster_zone_ids)).all()
+            ]
+        where = f" Assembly: {', '.join(points)}." if points else ""
+        title = f"{label} muster ACTIVE — {total_expected} expected"
+        message = (
+            f"A {label} muster is running (event #{event.id}). "
+            f"{total_expected} personnel are expected to report.{where} "
+            f"Open Mustering to run the roll-call."
+        )
+        # Drills are routine; a real emergency should stand out.
+        priority = "medium" if event_type == 1 else "critical"
+        self.db.execute(text("""
+            INSERT INTO sys_notifications
+                (dedup_key, notification_type, title, message, priority, link, expires_at)
+            VALUES (:dk, 'mustering', :title, :msg, :pri, '/mustering',
+                    NOW() + INTERVAL '12 hours')
+            ON CONFLICT (dedup_key) DO NOTHING
+        """), {"dk": f"muster-active-{event.id}", "title": title,
+               "msg": message, "pri": priority})
+        self.db.commit()
+
+        # Push to open browsers too, so the alert appears without a refresh.
+        try:
+            import asyncio
+            from ..api.notifications import broadcast_notification
+            payload = {"type": "mustering", "title": title, "message": message,
+                       "priority": priority, "link": "/mustering", "event_id": event.id}
+            try:
+                asyncio.get_running_loop().create_task(broadcast_notification(payload))
+            except RuntimeError:
+                asyncio.run(broadcast_notification(payload))
+        except Exception as e:
+            logger.debug(f"Muster SSE broadcast skipped: {e}")
+
     def process_mustering_punch(
         self, 
         emp_code: str, 
