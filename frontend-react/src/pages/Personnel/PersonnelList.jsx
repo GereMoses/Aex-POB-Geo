@@ -991,6 +991,10 @@ const PersonnelList = () => {
   };
 
   // ── Table columns ──────────────────────────────────────────────────────────
+  // SeamlessHR is the system of record for employee MASTER data. Lock only those
+  // fields — badge, zone, POB status and medical/emergency stay Apex POB's to edit.
+  const hrLocked = !!editingRecord?.hr_managed;
+
   const columns = [
     {
       title: 'Employee',
@@ -1035,6 +1039,21 @@ const PersonnelList = () => {
                 <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#6b7280', background: '#f3f4f6', borderRadius: 4, padding: '0 4px' }}>
                   {rec.emp_code}
                 </span>
+                {/* Where this record's master data comes from. SeamlessHR-owned
+                    records are read-only here, so say so before someone tries. */}
+                <Tooltip title={rec.hr_managed
+                  ? 'Master data owned by SeamlessHR — read-only here. Edit it in SeamlessHR and it syncs back.'
+                  : 'Created in Apex POB — fully editable here.'}>
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, letterSpacing: '.04em',
+                    borderRadius: 4, padding: '0 4px', whiteSpace: 'nowrap',
+                    color:      rec.hr_managed ? '#0e7490' : '#6b7280',
+                    background: rec.hr_managed ? '#ecfeff' : '#f3f4f6',
+                    border: `1px solid ${rec.hr_managed ? '#a5f3fc' : '#e5e7eb'}`,
+                  }}>
+                    {rec.hr_managed ? '🔒 SEAMLESSHR' : 'LOCAL'}
+                  </span>
+                </Tooltip>
                 {rec.email && (
                   <span style={{ fontSize: 10, color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
                     {rec.email}
@@ -1259,7 +1278,7 @@ const PersonnelList = () => {
                 Import
               </Button>
               <Button type="primary" icon={<PlusOutlined />} onClick={openAdd} size="small" style={{ fontWeight: 600 }}>
-                Register Employee
+                Register New
               </Button>
             </Space>
           </div>
@@ -1595,14 +1614,14 @@ const PersonnelList = () => {
         }
         forceRender
       >
-        <Form form={form} layout="vertical" size="small" disabled={!!editingRecord?.hr_managed} onValuesChange={(changed) => { if ('first_name' in changed) setFormFirstName(changed.first_name || ''); }}>
+        <Form form={form} layout="vertical" size="small" onValuesChange={(changed) => { if ('first_name' in changed) setFormFirstName(changed.first_name || ''); }}>
 
           {editingRecord?.hr_managed && (
             <Alert
               type="info" showIcon
               style={{ marginBottom: 14, borderRadius: 8 }}
               message="Managed by SeamlessHR"
-              description="This employee's master details (name, contact, employment, ID) are owned by SeamlessHR and are read-only here. Badge, zone, POB status, safety-critical flag and medical/emergency fields stay editable. Change master data in SeamlessHR — it syncs back."
+              description="Master details below (name, contact, employment, ID) are owned by SeamlessHR and are locked here — change them in SeamlessHR and they sync back, automatically overnight or immediately via webhook. Badge, zone, POB status, safety-critical flag and medical/emergency fields belong to Apex POB and stay editable."
             />
           )}
 
@@ -1665,12 +1684,12 @@ const PersonnelList = () => {
             </Col>
             <Col span={8}>
               <Form.Item name="first_name" label="First Name" rules={[{ required: true, message: 'Required' }]}>
-                <Input placeholder="John" />
+                <Input disabled={hrLocked} placeholder="John" />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="last_name" label="Last Name">
-                <Input placeholder="Doe" />
+                <Input disabled={hrLocked} placeholder="Doe" />
               </Form.Item>
             </Col>
           </Row>
@@ -1682,12 +1701,12 @@ const PersonnelList = () => {
             </Col>
             <Col span={8}>
               <Form.Item name="hire_date" label="Hire Date">
-                <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" placeholder="Select date" />
+                <DatePicker disabled={hrLocked} style={{ width: '100%' }} format="YYYY-MM-DD" placeholder="Select date" />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="nationality" label="Nationality">
-                <Input placeholder="e.g. Nigerian" />
+                <Input disabled={hrLocked} placeholder="e.g. Nigerian" />
               </Form.Item>
             </Col>
           </Row>
@@ -1696,12 +1715,12 @@ const PersonnelList = () => {
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item name="company" label="Company / Employer">
-                <Input placeholder="e.g. Marconi.ng EPC Limited" />
+                <Input disabled={hrLocked} placeholder="e.g. Marconi.ng EPC Limited" />
               </Form.Item>
             </Col>
             <Col span={12}>
               <Form.Item name="dept_id" label="Department">
-                <Select placeholder="Select department" allowClear showSearch optionFilterProp="children">
+                <Select disabled={hrLocked} placeholder="Select department" allowClear showSearch optionFilterProp="children">
                   {deptList.map(d => <Option key={d.id} value={d.id}>{d.name || d.dept_name}</Option>)}
                 </Select>
               </Form.Item>
@@ -1710,17 +1729,17 @@ const PersonnelList = () => {
           <Row gutter={12}>
             <Col span={8}>
               <Form.Item name="role" label="Job Title / Role">
-                <Input placeholder="e.g. Offshore Engineer" />
+                <Input disabled={hrLocked} placeholder="e.g. Offshore Engineer" />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="position" label="Position / Grade">
-                <Input placeholder="e.g. Senior Engineer" />
+                <Input disabled={hrLocked} placeholder="e.g. Senior Engineer" />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="employment_type" label="Employment Type" initialValue="EMPLOYEE">
-                <Select>
+                <Select disabled={hrLocked}>
                   <Option value="EMPLOYEE">Employee</Option>
                   <Option value="CONTRACTOR">Contractor</Option>
                   <Option value="SUBCONTRACTOR">Subcontractor</Option>
@@ -1733,7 +1752,7 @@ const PersonnelList = () => {
           <Row gutter={12}>
             <Col span={8}>
               <Form.Item name="personnel_type" label="Personnel Type" initialValue="STAFF">
-                <Select>
+                <Select disabled={hrLocked}>
                   <Option value="STAFF">Staff</Option>
                   <Option value="CONTRACTOR">Contractor</Option>
                   <Option value="VISITOR">Visitor</Option>
@@ -1772,31 +1791,31 @@ const PersonnelList = () => {
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item name="email" label="Email Address" rules={[{ type: 'email', message: 'Invalid email' }]}>
-                <Input placeholder="john.doe@company.com" />
+                <Input disabled={hrLocked} placeholder="john.doe@company.com" />
               </Form.Item>
             </Col>
             <Col span={12}>
               <Form.Item name="phone" label="Phone / Mobile">
-                <Input placeholder="+234 801 234 5678" />
+                <Input disabled={hrLocked} placeholder="+234 801 234 5678" />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={12}>
             <Col span={24}>
               <Form.Item name="address" label="Home Address">
-                <Input placeholder="Street, City, State" />
+                <Input disabled={hrLocked} placeholder="Street, City, State" />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item name="id_number" label="National ID / NIN">
-                <Input placeholder="ID number" style={{ fontFamily: 'monospace' }} />
+                <Input disabled={hrLocked} placeholder="ID number" style={{ fontFamily: 'monospace' }} />
               </Form.Item>
             </Col>
             <Col span={12}>
               <Form.Item name="passport_number" label="Passport Number">
-                <Input placeholder="Passport number" style={{ fontFamily: 'monospace' }} />
+                <Input disabled={hrLocked} placeholder="Passport number" style={{ fontFamily: 'monospace' }} />
               </Form.Item>
             </Col>
           </Row>

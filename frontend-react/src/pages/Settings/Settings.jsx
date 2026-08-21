@@ -2487,14 +2487,24 @@ const HRIntegrationTab = () => {
   React.useEffect(() => {
     if (cfgRaw) {
       form.setFieldsValue({
-        api_base_url:        cfgRaw.api_base_url        || 'https://api.seamlesshr.com',
+        api_base_url:        cfgRaw.api_base_url        || 'https://api-sandbox.seamlesshr.app',
         api_key:             cfgRaw.configured ? cfgRaw.api_key_masked : '',
+        client_id:           cfgRaw.client_id           || '',
         org_id:              cfgRaw.org_id              || '',
         auth_header_name:    cfgRaw.auth_header_name    || 'Authorization',
-        attendance_endpoint: cfgRaw.attendance_endpoint || '/v1/attendance/clock-records',
+        attendance_endpoint: cfgRaw.attendance_endpoint || '/biometric/process',
         employee_endpoint:   cfgRaw.employee_endpoint   || '/v1/employees',
         is_enabled:          cfgRaw.is_enabled           || false,
         sync_time:           cfgRaw.sync_time            || '00:00',
+        // Field-mapping shortcuts (stored inside options)
+        map_emp_code:        cfgRaw.options?.employee_field_map?.emp_code   || 'staff_id',
+        map_last_name:       cfgRaw.options?.employee_field_map?.last_name  || 'staff_name',
+        map_first_name:      cfgRaw.options?.employee_field_map?.first_name || 'staff_other_names',
+        clock_in_type:       cfgRaw.options?.clock_in_type     || 'CLOCK_IN',
+        clock_out_type:      cfgRaw.options?.clock_out_type    || 'CLOCK_OUT',
+        default_device_sn:   cfgRaw.options?.default_device_sn || 'POB-MANUAL',
+        datetime_style:      cfgRaw.options?.datetime_style    || 'local_naive',
+        time_zone:           cfgRaw.options?.time_zone         || 'Africa/Lagos',
       });
       if (cfgRaw.options) setOptionsText(JSON.stringify(cfgRaw.options, null, 2));
     }
@@ -2514,6 +2524,25 @@ const HRIntegrationTab = () => {
         setOptionsErr('Invalid JSON in advanced options'); return;
       }
     }
+
+    // Fold the field-mapping shortcuts back into options. They are applied AFTER
+    // the advanced JSON so the visible form fields always win over a stale blob.
+    const opts = { ...(payload.options || {}) };
+    const empMap = { ...(opts.employee_field_map || {}) };
+    if (values.map_emp_code)   empMap.emp_code   = values.map_emp_code.trim();
+    if (values.map_last_name)  empMap.last_name  = values.map_last_name.trim();
+    if (values.map_first_name) empMap.first_name = values.map_first_name.trim();
+    opts.employee_field_map = empMap;
+    if (values.clock_in_type)     opts.clock_in_type     = values.clock_in_type.trim();
+    if (values.clock_out_type)    opts.clock_out_type    = values.clock_out_type.trim();
+    if (values.default_device_sn) opts.default_device_sn = values.default_device_sn.trim();
+    if (values.datetime_style)    opts.datetime_style    = values.datetime_style;
+    if (values.time_zone)         opts.time_zone         = values.time_zone.trim();
+    payload.options = opts;
+    ['map_emp_code', 'map_last_name', 'map_first_name', 'clock_in_type',
+     'clock_out_type', 'default_device_sn', 'datetime_style',
+     'time_zone'].forEach(k => delete payload[k]);
+
     setSaving(true);
     try {
       await apiService.put('/api/v1/hr-integration/config', payload);
@@ -2660,30 +2689,52 @@ const HRIntegrationTab = () => {
 
               <Form.Item label="API Base URL" name="api_base_url"
                 rules={[{ required: true, message: 'Enter the SeamlessHR API base URL' }]}
-                extra="Obtain from SeamlessHR — typically https://api.seamlesshr.com">
-                <Input placeholder="https://api.seamlesshr.com" />
+                extra="Sandbox: https://api-sandbox.seamlesshr.app — SeamlessHR give you the live host with your production credentials">
+                <Input placeholder="https://api-sandbox.seamlesshr.app" />
               </Form.Item>
 
-              <Form.Item
-                label={
-                  <Space>
-                    API Key
-                    {cfgRaw?.configured && !apiKeyEditing && (
-                      <Button type="link" size="small" style={{ padding: 0, fontSize: 11 }}
-                        onClick={() => { setApiKeyEditing(true); form.setFieldValue('api_key', ''); }}>
-                        Change
-                      </Button>
-                    )}
-                  </Space>
+              <Alert type="info" showIcon style={{ marginBottom: 14 }}
+                message="SeamlessHR issues two credentials"
+                description={
+                  <span>
+                    Request them from <b>support@seamlesshr.com</b>. Enter the pair below —
+                    they are sent as the <code>x-client-id</code> and <code>x-client-secret</code>
+                    {' '}headers on every request. Nothing else needs changing.
+                  </span>
                 }
-                name="api_key"
-                rules={[{ required: !cfgRaw?.configured || apiKeyEditing, message: 'Enter your SeamlessHR API key' }]}
-                extra="Provided by SeamlessHR when they set up your API access">
-                <Input.Password
-                  placeholder={cfgRaw?.configured && !apiKeyEditing ? cfgRaw.api_key_masked : 'Enter API key'}
-                  disabled={cfgRaw?.configured && !apiKeyEditing}
-                />
-              </Form.Item>
+              />
+
+              <Row gutter={12}>
+                <Col span={12}>
+                  <Form.Item label="Client ID  (x-client-id)" name="client_id"
+                    rules={[{ required: true, message: 'Enter the Client ID from SeamlessHR' }]}
+                    extra="Not secret — shown in full so you can check the pairing">
+                    <Input placeholder="e.g. marconi-ng-prod" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item
+                    label={
+                      <Space>
+                        Client Secret  (x-client-secret)
+                        {cfgRaw?.configured && !apiKeyEditing && (
+                          <Button type="link" size="small" style={{ padding: 0, fontSize: 11 }}
+                            onClick={() => { setApiKeyEditing(true); form.setFieldValue('api_key', ''); }}>
+                            Change
+                          </Button>
+                        )}
+                      </Space>
+                    }
+                    name="api_key"
+                    rules={[{ required: !cfgRaw?.configured || apiKeyEditing, message: 'Enter your SeamlessHR client secret' }]}
+                    extra="Stored encrypted; only the last 6 characters are ever shown again">
+                    <Input.Password
+                      placeholder={cfgRaw?.configured && !apiKeyEditing ? cfgRaw.api_key_masked : 'Enter client secret'}
+                      disabled={cfgRaw?.configured && !apiKeyEditing}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
 
               <Row gutter={12}>
                 <Col span={12}>
@@ -2694,7 +2745,7 @@ const HRIntegrationTab = () => {
                 </Col>
                 <Col span={12}>
                   <Form.Item label="Auth Header" name="auth_header_name"
-                    extra="Usually 'Authorization' (Bearer token)">
+                    extra="Not used by SeamlessHR (it authenticates via the two headers above) — leave as is">
                     <Input placeholder="Authorization" />
                   </Form.Item>
                 </Col>
@@ -2703,8 +2754,8 @@ const HRIntegrationTab = () => {
               <Row gutter={12}>
                 <Col span={14}>
                   <Form.Item label="Attendance Endpoint" name="attendance_endpoint"
-                    extra="Path to POST attendance records">
-                    <Input placeholder="/v1/attendance/clock-records" />
+                    extra="SeamlessHR's bulk biometric sync — /biometric/process">
+                    <Input placeholder="/biometric/process" />
                   </Form.Item>
                 </Col>
                 <Col span={10}>
@@ -2718,8 +2769,96 @@ const HRIntegrationTab = () => {
               <Row gutter={12}>
                 <Col span={10}>
                   <Form.Item label="Daily Sync Time (UTC)" name="sync_time"
-                    extra="Time to run the nightly sync (HH:MM)">
+                    extra="Time to run the nightly sync (HH:MM). UTC — for 03:30 Lagos enter 02:30">
                     <Input placeholder="00:00" maxLength={5} />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              {/* The four settings most likely to need correcting on the first live
+                  connection. They live in the options JSON, but are surfaced here so
+                  nobody has to hand-edit JSON to fix a field name. */}
+              <Divider orientation="left" plain style={{ marginTop: 4 }}>
+                Field mapping — adjust if SeamlessHR's response differs
+              </Divider>
+              <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+                message="Check these against your first Test Connection"
+                description="Defaults follow SeamlessHR's published documentation. If names come through swapped or employees are skipped, correct them here — no code change needed."
+              />
+
+              <Row gutter={12}>
+                <Col span={8}>
+                  <Form.Item label="Employee key" name="map_emp_code"
+                    extra="SeamlessHR field holding the employee code">
+                    <Input placeholder="staff_id" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="Surname field" name="map_last_name"
+                    extra="Maps to Last name in ApexPOB">
+                    <Input placeholder="staff_name" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="First-name field" name="map_first_name"
+                    extra="Maps to First name in ApexPOB">
+                    <Input placeholder="staff_other_names" />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Row gutter={12}>
+                <Col span={8}>
+                  <Form.Item label="Timestamp format" name="datetime_style"
+                    extra="How punch times are written">
+                    <Select
+                      options={[
+                        { value: 'offset',      label: 'UTC with offset  (…T06:15:00+00:00)' },
+                        { value: 'local_naive', label: 'Site local, no offset  (…T07:15:00)' },
+                        { value: 'utc_naive',   label: 'UTC, no offset  (…T06:15:00)' },
+                      ]}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="Site time zone" name="time_zone"
+                    extra="Used only by 'Site local, no offset'">
+                    <Input placeholder="Africa/Lagos" />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+                message="Confirm the timestamp format with SeamlessHR before the first payroll run"
+                description={
+                  <span>
+                    Apex POB stores UTC and Lagos is UTC+1, so a <b>07:15</b> punch is
+                    {' '}<code>06:15Z</code>. SeamlessHR's docs are inconsistent — their request
+                    {' '}example has no offset, their schema default has one, and their own
+                    {' '}<code>GET /v1/attendances</code> returns actual punch times as naive local
+                    {' '}(<code>2024-11-20 09:43:05</code>). If they read an offset-bearing value as
+                    {' '}local time, every punch lands an hour early. One sandbox day settles it.
+                  </span>
+                }
+              />
+
+              <Row gutter={12}>
+                <Col span={8}>
+                  <Form.Item label="Clock-in event value" name="clock_in_type"
+                    extra="Sent as 'type' on a clock-in">
+                    <Input placeholder="CLOCK_IN" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="Clock-out event value" name="clock_out_type"
+                    extra="Sent as 'type' on a clock-out">
+                    <Input placeholder="CLOCK_OUT" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="Fallback device serial" name="default_device_sn"
+                    extra="Used when no reader backs the punch">
+                    <Input placeholder="POB-MANUAL" />
                   </Form.Item>
                 </Col>
               </Row>
@@ -2733,12 +2872,16 @@ const HRIntegrationTab = () => {
                 {advOpen && (
                   <div style={{ marginTop: 8 }}>
                     <div style={{ fontSize: 12, color: '#8c8c8c', marginBottom: 6 }}>
-                      JSON. Keys: <code>auth_type</code> (bearer|api_key|basic|oauth2),
+                      Defaults already match SeamlessHR — you should not need to touch this.
+                      {' '}JSON keys: <code>auth_type</code> (dual_header|bearer|api_key|basic|oauth2),
+                      {' '}<code>client_id</code>, <code>payload_style</code> (punch_events|daily_summary),
+                      {' '}<code>clock_in_type</code>, <code>clock_out_type</code>, <code>default_device_sn</code>,
                       {' '}<code>payload_wrapper_key</code> ("" = bare array), <code>employee_id_source</code>
                       {' '}(emp_code|badge_id|biotime_employee_id), <code>time_format</code> (iso|hms),
                       {' '}<code>org_header_name</code>, <code>batch_size</code>, <code>http_method</code>,
-                      {' '}<code>field_map</code>, <code>extra_headers</code>, <code>oauth_token_url</code>,
-                      {' '}<code>oauth_client_id</code>, <code>oauth_scope</code>, <code>basic_user</code>.
+                      {' '}<code>field_map</code>, <code>employee_field_map</code>, <code>extra_headers</code>,
+                      {' '}<code>oauth_token_url</code>, <code>oauth_client_id</code>, <code>oauth_scope</code>,
+                      {' '}<code>basic_user</code>.
                     </div>
                     <Input.TextArea rows={10} value={optionsText} spellCheck={false}
                       style={{ fontFamily: 'monospace', fontSize: 12 }}
