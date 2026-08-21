@@ -137,19 +137,56 @@ def _send_termii(recipients: List[str], message: str) -> Dict[str, object]:
 
 
 def _send_generic(recipients: List[str], message: str) -> Dict[str, object]:
+    """POST to any HTTP WhatsApp gateway, self-hosted included.
+
+    The body shape was fixed (api_key in the body, fields to/message), which no
+    self-hosted gateway actually uses — Evolution API wants a Bearer/apikey
+    header and {"number", "text"}, WAHA wants {"chatId", "text", "session"}. So
+    the field names and auth header are configurable, defaults unchanged:
+
+        WHATSAPP_API_URL          POST endpoint
+        WHATSAPP_API_KEY          credential
+        WHATSAPP_API_KEY_HEADER   send the key as this HEADER (e.g. "apikey")
+        WHATSAPP_API_HEADERS      extra headers as JSON
+        WHATSAPP_FIELD_TO         recipient field   (default "to")
+        WHATSAPP_FIELD_MESSAGE    message field     (default "message")
+        WHATSAPP_EXTRA_BODY       constant body fields as JSON (e.g. session name)
+
+    NOTE: a self-hosted gateway drives an UNOFFICIAL WhatsApp client. It violates
+    Meta's terms and such numbers are commonly banned within weeks. Do not make
+    it the only route for an emergency alert — keep email or SMS alongside it.
+    """
+    import json as _json
     import requests
 
     url = os.getenv("WHATSAPP_API_URL", "")
     api_key = os.getenv("WHATSAPP_API_KEY", "")
+    key_header = os.getenv("WHATSAPP_API_KEY_HEADER", "").strip()
+    f_to = os.getenv("WHATSAPP_FIELD_TO", "to")
+    f_msg = os.getenv("WHATSAPP_FIELD_MESSAGE", "message")
+
+    headers: Dict[str, str] = {}
+    try:
+        headers.update(_json.loads(os.getenv("WHATSAPP_API_HEADERS", "") or "{}"))
+    except Exception:
+        logger.warning("WHATSAPP_API_HEADERS is not valid JSON — ignoring it")
+    if key_header and api_key:
+        headers[key_header] = api_key
+
+    extra: Dict[str, object] = {}
+    try:
+        extra.update(_json.loads(os.getenv("WHATSAPP_EXTRA_BODY", "") or "{}"))
+    except Exception:
+        logger.warning("WHATSAPP_EXTRA_BODY is not valid JSON — ignoring it")
 
     sent, failed = 0, []
     for number in recipients:
         try:
-            resp = requests.post(
-                url,
-                json={"api_key": api_key, "to": number, "message": message},
-                timeout=10,
-            )
+            body: Dict[str, object] = {f_to: number, f_msg: message}
+            if api_key and not key_header:
+                body["api_key"] = api_key
+            body.update(extra)
+            resp = requests.post(url, json=body, headers=headers, timeout=10)
             resp.raise_for_status()
             sent += 1
         except Exception as exc:  # noqa: BLE001
