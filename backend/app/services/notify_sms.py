@@ -163,19 +163,72 @@ def _send_termii(recipients: List[str], message: str, channel: str) -> Dict[str,
 
 
 def _send_generic(recipients: List[str], message: str) -> Dict[str, object]:
+    """POST to any HTTP SMS gateway, including the free self-hosted ones.
+
+    The original shape was fixed — api_key in the BODY, fields named to/message —
+    which matches almost no real gateway. The self-hosted options people actually
+    use for Nigeria all differ:
+
+        httpSMS    header x-api-key,  body {"content", "from", "to"}
+        textbee    header x-api-key,  body {"recipients": [...], "message"}
+        SMSGate    Basic auth,        body {"phoneNumbers": [...], "message"}
+
+    So the field names, the auth header and whether recipients are sent as an
+    array are all configurable. Defaults reproduce the old behaviour exactly.
+
+        SMS_API_URL          POST endpoint
+        SMS_API_KEY          credential
+        SMS_API_KEY_HEADER   send the key as this HEADER instead of in the body
+                             (e.g. "x-api-key"); unset = body field "api_key"
+        SMS_API_HEADERS      extra headers as JSON, e.g. {"Authorization":"Basic .."}
+        SMS_FIELD_TO         recipient field name        (default "to")
+        SMS_FIELD_MESSAGE    message field name          (default "message")
+        SMS_FIELD_FROM       sender field name           (default "from")
+        SMS_BATCH_RECIPIENTS "true" = send all numbers in ONE request as a list
+    """
+    import json as _json
     import requests
 
     url = os.getenv("SMS_API_URL", "")
     api_key = os.getenv("SMS_API_KEY", "")
     sender_id = os.getenv("SMS_SENDER_ID", "")
+    key_header = os.getenv("SMS_API_KEY_HEADER", "").strip()
+    f_to = os.getenv("SMS_FIELD_TO", "to")
+    f_msg = os.getenv("SMS_FIELD_MESSAGE", "message")
+    f_from = os.getenv("SMS_FIELD_FROM", "from")
+    batch = os.getenv("SMS_BATCH_RECIPIENTS", "").lower() in ("1", "true", "yes")
+
+    headers: Dict[str, str] = {}
+    try:
+        headers.update(_json.loads(os.getenv("SMS_API_HEADERS", "") or "{}"))
+    except Exception:
+        logger.warning("SMS_API_HEADERS is not valid JSON — ignoring it")
+    if key_header and api_key:
+        headers[key_header] = api_key
+
+    def _body(target) -> Dict[str, object]:
+        body: Dict[str, object] = {f_to: target, f_msg: message}
+        # Only put the key in the body when it is NOT being sent as a header.
+        if api_key and not key_header:
+            body["api_key"] = api_key
+        if sender_id:
+            body[f_from] = sender_id
+        return body
 
     sent, failed = 0, []
+    if batch:
+        try:
+            resp = requests.post(url, json=_body(recipients), headers=headers, timeout=10)
+            resp.raise_for_status()
+            sent = len(recipients)
+        except Exception as exc:  # noqa: BLE001
+            failed = list(recipients)
+            logger.warning("SMS batch of %d failed: %s", len(recipients), exc)
+        return _finish(sent, failed, "generic")
+
     for number in recipients:
         try:
-            payload = {"api_key": api_key, "to": number, "message": message}
-            if sender_id:
-                payload["from"] = sender_id
-            resp = requests.post(url, json=payload, timeout=10)
+            resp = requests.post(url, json=_body(number), headers=headers, timeout=10)
             resp.raise_for_status()
             sent += 1
         except Exception as exc:  # noqa: BLE001
