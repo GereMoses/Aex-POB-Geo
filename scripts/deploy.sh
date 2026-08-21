@@ -15,6 +15,11 @@ set -euo pipefail
 # file interpolate to empty and the run aborts before it builds anything.
 # (`env_file: .env.prod` inside the YAML only populates the CONTAINERS.)
 COMPOSE="docker compose --env-file .env.prod -f docker-compose.prod.yml"
+
+# Stamp the image with the commit it was built from, so a running container can
+# tell you which code it is. Compare with: curl -s localhost:8000/health
+export GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+export BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 info()    { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
@@ -62,6 +67,27 @@ ensure_networks() {
   fi
 }
 
+# ── Build verification ────────────────────────────────────────────────────────
+# Confirms the container is actually running the checked-out commit. `docker
+# compose up -d` does NOT rebuild, so a deploy that pulled new code but skipped
+# the build leaves the old image running while everything reports healthy.
+verify_build() {
+  local want running
+  want="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  running="$(docker exec pob_backend curl -sf http://localhost:8000/health 2>/dev/null \
+             | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')"
+  if [ -z "$running" ]; then
+    warn "Could not read the running build from /health."
+  elif [ "$running" = "unknown" ]; then
+    warn "Backend is running an image with no build stamp — rebuild with this script."
+  elif [ "$running" != "$want" ]; then
+    error "DEPLOY DID NOT TAKE: checkout is $want but the backend is running $running.
+        The image was not rebuilt. Run: ./scripts/deploy.sh update"
+  else
+    info "Verified: backend is running $running (matches the checkout)."
+  fi
+}
+
 # ── Deploy (first time) ───────────────────────────────────────────────────────
 deploy() {
   step "POB System — First Deploy"
@@ -80,6 +106,7 @@ deploy() {
   sleep 15
 
   ensure_networks
+  verify_build
 
   show_status
 }
@@ -101,6 +128,7 @@ update() {
   $COMPOSE up -d --no-deps --remove-orphans nginx
 
   ensure_networks
+  verify_build
 
   info "Update complete."
   show_status

@@ -16,6 +16,13 @@ COPY requirements.txt .
 # --timeout/--retries make the build resilient to slow/flaky PyPI links.
 RUN pip install --no-cache-dir --timeout 120 --retries 10 -r requirements.txt
 
+# Build stamp — lets a running container say WHICH code it is, so a deploy that
+# pulled but never rebuilt is visible instead of silent. Set by scripts/deploy.sh.
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+ENV APP_GIT_SHA=$GIT_SHA
+ENV APP_BUILD_TIME=$BUILD_TIME
+
 # Copy application code
 COPY . .
 

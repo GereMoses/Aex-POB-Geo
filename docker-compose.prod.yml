@@ -116,6 +116,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
     image: pob_backend:latest
     container_name: pob_backend
     env_file: .env.prod
@@ -130,6 +133,11 @@ services:
       - media_data:/app/media
       - logs_data:/app/logs
       - ${BACKUP_DIR:-db_backups}:/backups
+      # The backend applies pending migrations itself at startup (see
+      # _apply_pending_migrations in main.py). db-init still runs them on a full
+      # `up`, but `docker compose restart` skips db-init entirely — so without
+      # this the schema silently stops moving while the code moves on.
+      - ./database/init/incremental.sql:/migrations/incremental.sql:ro
     depends_on:
       postgres:
         condition: service_healthy

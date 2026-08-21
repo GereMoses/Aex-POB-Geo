@@ -1006,6 +1006,102 @@ async def startup_event():
     except Exception as _me:
         logger.debug(f"Subscription migration skipped: {_me}")
 
+    # ── Pending schema migrations ────────────────────────────────────────────
+    # Applied HERE as well as in db-init, because db-init only runs on a full
+    # `docker compose up`. Someone who deploys with `git pull && docker compose
+    # restart` — a completely natural thing to type — skips db-init entirely and
+    # the schema silently stops tracking the code. That failure is invisible:
+    # containers report healthy and features just break, as the empty `users`
+    # table did to 55 foreign keys.
+    #
+    # Guarded by a checksum so this is a no-op on every boot after the first: the
+    # file is only re-applied when it actually changes. Every statement in
+    # incremental.sql is idempotent (IF NOT EXISTS / OR REPLACE / ON CONFLICT).
+    _apply_pending_migrations()
+
+    # Say out loud which build this is. A deploy that pulled the repo but never
+    # rebuilt the image leaves old code running while everything reports healthy;
+    # this line (and /health) is how you tell.
+    import os as _os
+    _sha = _os.getenv("APP_GIT_SHA", "unknown")
+    _built = _os.getenv("APP_BUILD_TIME", "unknown")
+    if _sha == "unknown":
+        logger.warning(
+            "Running an image with NO build stamp — it was not built by "
+            "scripts/deploy.sh, so it may predate the current checkout."
+        )
+    else:
+        logger.info(f"✅ Running build {_sha} (built {_built})")
+
+
+def _apply_pending_migrations() -> None:
+    """Apply database/init/incremental.sql when its contents have changed.
+
+    Records the file's sha256 in schema_migrations so an unchanged file costs one
+    cheap SELECT. Failures are logged loudly but never prevent start-up — a
+    backend that refuses to boot is worse than one running a slightly older
+    schema, and db-init remains the primary path.
+    """
+    import hashlib
+    from pathlib import Path as _Path
+    from sqlalchemy import text as _text
+
+    path = _Path("/migrations/incremental.sql")
+    if not path.exists():
+        logger.debug("No incremental.sql mounted — skipping startup migrations")
+        return
+
+    try:
+        sql = path.read_text()
+    except Exception as e:
+        logger.warning(f"Could not read incremental.sql: {e}")
+        return
+    digest = hashlib.sha256(sql.encode()).hexdigest()
+
+    db = SessionLocal()
+    try:
+        db.execute(_text("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                name        VARCHAR(120) PRIMARY KEY,
+                checksum    VARCHAR(64)  NOT NULL,
+                applied_at  TIMESTAMPTZ  DEFAULT NOW()
+            )
+        """))
+        db.commit()
+
+        row = db.execute(_text(
+            "SELECT checksum FROM schema_migrations WHERE name = 'incremental.sql'"
+        )).fetchone()
+        if row and row[0] == digest:
+            logger.info("✅ Schema up to date (incremental.sql unchanged)")
+            return
+
+        logger.warning(
+            "Schema drift detected — applying incremental.sql (%s). This normally "
+            "means the code was deployed without db-init running.",
+            "changed" if row else "first run",
+        )
+        # Bound the wait: if another process holds a conflicting lock we would
+        # rather fail this attempt than block start-up behind it.
+        db.execute(_text("SET LOCAL lock_timeout = '15s'"))
+        db.execute(_text(sql))
+        db.execute(_text("""
+            INSERT INTO schema_migrations (name, checksum, applied_at)
+            VALUES ('incremental.sql', :c, NOW())
+            ON CONFLICT (name) DO UPDATE SET checksum = EXCLUDED.checksum,
+                                             applied_at = NOW()
+        """), {"c": digest})
+        db.commit()
+        logger.info("✅ incremental.sql applied at startup")
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Startup migration FAILED — the schema may be behind the code: %s. "
+            "Run ./scripts/deploy.sh update, or docker compose up -d to re-run db-init.", e
+        )
+    finally:
+        db.close()
+
     # Log all registered routes grouped by prefix for operational visibility
     ws_routes   = [r.path for r in app.routes if hasattr(r, "path") and "ws" in r.path.lower()]
     api_routes  = sorted({"/".join(r.path.split("/")[:4]) for r in app.routes
@@ -1061,10 +1157,15 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Lightweight health check — used by Docker. Never blocks the event loop."""
+    import os as _os
     return {
         "status": "healthy",
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT,
+        # Which code is actually running. Compare against `git rev-parse --short HEAD`
+        # on the server to catch a pull that was never rebuilt.
+        "build": _os.getenv("APP_GIT_SHA", "unknown"),
+        "built_at": _os.getenv("APP_BUILD_TIME", "unknown"),
     }
 
 
