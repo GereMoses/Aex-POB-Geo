@@ -129,7 +129,7 @@ def check_scheduled_drills(self):
             send_drill_notifications.delay(started_drills)
         
         # Clean up old processed drills (older than 7 days)
-        cleanup_old_schedules(db)
+        cleanup_old_schedules()
         
     except Exception as e:
         logger.error(f"❌ Error in check_scheduled_drills task: {e}")

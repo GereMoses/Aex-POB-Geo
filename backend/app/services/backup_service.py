@@ -17,7 +17,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text, func
 import json
 import hashlib
 import boto3

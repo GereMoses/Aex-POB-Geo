@@ -5,6 +5,7 @@ REST API endpoints for employee resignation workflow and separation process
 
 from fastapi import APIRouter, Depends, HTTPException, status as http_status, Query, UploadFile, File
 from sqlalchemy.orm import Session
+from sqlalchemy import desc
 from typing import List, Optional
 import logging
 
@@ -438,7 +439,7 @@ async def upload_resignation_document(
             "success": True,
             "data": {
                 "id": document.id,
-                "document_path": document_path,
+                "document_path": document.document_path,
                 "file_size": document.file_size
             },
             "message": "Document uploaded successfully"

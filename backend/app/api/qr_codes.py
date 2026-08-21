@@ -15,6 +15,10 @@ from ..core.dependencies import get_current_user
 from ..models.user import User
 from ..services.qr_service import qr_service
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["qr-codes"])
 
 
@@ -249,7 +253,7 @@ async def get_qr_templates(
                 "description": "Emergency contact information with medical details",
                 "recommended_size": "LARGE",
                 "include_logo": False,
-                "expiry_days": null  # Never expires
+                "expiry_days": None  # Never expires
             },
             "training": {
                 "name": "Training Verification",
@@ -368,7 +372,7 @@ async def get_qr_code_templates(
                 "qr_type": "EMERGENCY",
                 "recommended_size": "MEDIUM",
                 "include_logo": True,
-                "expiry_days": null  # Never expires
+                "expiry_days": None  # Never expires
             },
             "training": {
                 "name": "Training Verification",

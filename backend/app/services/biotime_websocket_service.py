@@ -7,7 +7,7 @@ including live device status streaming, attendance monitoring, and biometric ver
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session

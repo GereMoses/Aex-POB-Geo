@@ -727,6 +727,7 @@ class MusteringDashboardService:
             # Calculate zone averages
             for zone_id in zone_performance:
                 zone_data = zone_performance[zone_id]
+                zone = self.db.query(Zone).filter(Zone.id == zone_id).first()
                 if zone_data['events'] > 0:
                     zone_total_expecteds = [
                         total_expecteds[i]

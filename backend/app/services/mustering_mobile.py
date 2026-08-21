@@ -4,8 +4,8 @@ Mobile capabilities for mustering system - GPS tracking, mobile check-ins, photo
 """
 
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func
-from datetime import datetime
+from sqlalchemy import and_, func, desc
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 import logging
 import json
@@ -390,10 +390,7 @@ class MobileMusteringService:
                     query = query.filter(MusteringLog.event_id.in_(event_ids))
             
             checkins = query.order_by(desc(MusteringLog.check_time)).all()
-            
-            else:
-                checkins = query.order_by(desc(MusteringLog.check_time)).all()
-            
+
             if not checkins:
                 return {
                     "total_checkins": 0,
@@ -433,8 +430,7 @@ class MobileMusteringService:
                 "avg_checkin_time": round(avg_checkin_time, 2),
                 "zone_breakdown": self._get_mobile_stats_by_zone(checkins)
             }
-            }
-            
+
         except Exception as e:
             logger.error(f"Error getting mobile mustering statistics: {e}")
             raise

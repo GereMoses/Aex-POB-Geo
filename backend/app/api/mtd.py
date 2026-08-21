@@ -3,7 +3,7 @@ MTD (Medical, Training, Development) API Endpoints
 POB Version 2.0 - HSE Compliance Module
 """
 
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, BackgroundTasks
 from fastapi.responses import FileResponse
@@ -970,6 +970,7 @@ async def enforce_compliance(
                 db.commit()
                 
                 # Log compliance action
+                from ..models.mtd import MTDComplianceLog
                 compliance_log = MTDComplianceLog(
                     emp_id=emp_id,
                     record_type="enforcement",

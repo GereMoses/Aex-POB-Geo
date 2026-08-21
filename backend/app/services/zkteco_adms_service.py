@@ -8,7 +8,7 @@ from sqlalchemy import text, insert, update, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 import logging
 

@@ -16,6 +16,10 @@ import json
 import uuid
 
 from ..models.personnel import Personnel
+
+import logging
+
+logger = logging.getLogger(__name__)
 from ..core.database import get_db
 
 

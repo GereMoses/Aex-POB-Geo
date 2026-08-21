@@ -9,6 +9,7 @@ This service provides comprehensive system management functionality including:
 - Cache management for performance
 """
 
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Union

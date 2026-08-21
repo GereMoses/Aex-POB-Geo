@@ -3,7 +3,7 @@ Emergency Management API - POB v2.0
 Complete REST API for emergency operations, lockdown, fire mode, notifications
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, WebSocket, WebSocketDisconnect, BackgroundTasks, Header, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Query, WebSocket, WebSocketDisconnect, BackgroundTasks, Header, Request, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func, text
 from pydantic import BaseModel, Field

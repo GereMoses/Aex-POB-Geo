@@ -617,8 +617,12 @@ class OnboardingService:
     ) -> None:
         """Create default tasks based onboarding template"""
         try:
-            from ..models.onboarding import OnboardingTask, OnboardingTemplate
-            
+            from ..models.onboarding import Onboarding, OnboardingTask, OnboardingTemplate
+
+            onboarding = db.query(Onboarding).filter(Onboarding.id == onboarding_id).first()
+            if not onboarding:
+                return
+
             if onboarding.template_id:
                 template = db.query(OnboardingTemplate).filter(
                     OnboardingTemplate.id == onboarding.template_id

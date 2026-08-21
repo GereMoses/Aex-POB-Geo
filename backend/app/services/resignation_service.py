@@ -81,7 +81,8 @@ class ResignationService:
             await self._send_notification(
                 resignation.id, "CREATED", 
                 f"Resignation initiated for {personnel.full_name}",
-                [created_by, personnel.user_id if personnel.user_id else None]
+                [created_by, personnel.user_id if personnel.user_id else None],
+                db
             )
             
             logger.info(f"Created resignation for personnel {resignation_data['personnel_id']}")
@@ -164,14 +165,16 @@ class ResignationService:
             await self._send_device_command(
                 resignation.personnel_id, 
                 "DATA DELETE USERINFO",
-                f"Delete user {resignation.personnel.badge_id} from device"
+                f"Delete user {resignation.personnel.badge_id} from device",
+                db
             )
             
             # Send notifications
             await self._send_notification(
                 resignation_id, "APPROVED",
                 f"Resignation approved for {resignation.personnel.full_name}",
-                [approved_by, resignation.personnel.user_id if resignation.personnel.user_id else None]
+                [approved_by, resignation.personnel.user_id if resignation.personnel.user_id else None],
+                db
             )
             
             logger.info(f"Approved resignation {resignation_id}")
@@ -211,7 +214,8 @@ class ResignationService:
             await self._send_notification(
                 resignation_id, "REJECTED",
                 f"Resignation rejected for {resignation.personnel.full_name}",
-                [rejected_by, resignation.personnel.user_id if resignation.personnel.user_id else None]
+                [rejected_by, resignation.personnel.user_id if resignation.personnel.user_id else None],
+                db
             )
             
             logger.info(f"Rejected resignation {resignation_id}")
@@ -305,7 +309,7 @@ class ResignationService:
                     resignation_data["employee"] = {}
                 
                 # Calculate completion percentage
-                resignation_data["completion_percentage"] = self._calculate_completion_percentage(resignation)
+                resignation_data["completion_percentage"] = self._calculate_completion_percentage(resignation, db)
                 resignation_data["tasks_completed"] = self._count_completed_tasks(resignation.id, db)
                 resignation_data["total_tasks"] = self._count_total_tasks(resignation.id, db)
                 
@@ -412,7 +416,7 @@ class ResignationService:
                 resignation_data["employee"] = {}
 
             # Calculate completion percentage
-            resignation_data["completion_percentage"] = self._calculate_completion_percentage(resignation)
+            resignation_data["completion_percentage"] = self._calculate_completion_percentage(resignation, db)
             resignation_data["tasks_completed"] = self._count_completed_tasks(resignation.id, db)
             resignation_data["total_tasks"] = self._count_total_tasks(resignation.id, db)
             
@@ -556,7 +560,8 @@ class ResignationService:
                 await self._send_device_command(
                     resignation.personnel_id,
                     "DATA DELETE USERINFO",
-                    f"Delete user {resignation.personnel.badge_id} from device"
+                    f"Delete user {resignation.personnel.badge_id} from device",
+                    db
                 )
             
             elif resignation.status.value == "COMPLETED":
@@ -571,7 +576,7 @@ class ResignationService:
         except Exception as e:
             logger.error(f"Error handling status change: {str(e)}")
     
-    async def _send_device_command(self, personnel_id: int, command: str, message: str):
+    async def _send_device_command(self, personnel_id: int, command: str, message: str, db: Session = None):
         """Send command to device for personnel"""
         try:
             # Get devices assigned to personnel
@@ -589,7 +594,7 @@ class ResignationService:
         except Exception as e:
             logger.error(f"Error sending device command: {str(e)}")
     
-    async def _send_notification(self, resignation_id: int, notification_type: str, message: str, recipients: List[int]):
+    async def _send_notification(self, resignation_id: int, notification_type: str, message: str, recipients: List[int], db: Session = None):
         """Send notification for resignation event"""
         try:
             for recipient_id in recipients:
@@ -611,7 +616,7 @@ class ResignationService:
         except Exception as e:
             logger.error(f"Error sending notification: {str(e)}")
     
-    def _calculate_completion_percentage(self, resignation: Resignation) -> float:
+    def _calculate_completion_percentage(self, resignation: Resignation, db: Session = None) -> float:
         """Calculate resignation completion percentage"""
         try:
             if not resignation:

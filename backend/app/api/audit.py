@@ -1,7 +1,7 @@
 """
 Audit Trail API — query base_operationlog for who changed what and when.
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from ..core.database import get_db

@@ -11,6 +11,7 @@ This service provides comprehensive email and SMS functionality including:
 """
 
 import logging
+import os
 import smtplib
 import json
 from datetime import datetime, timezone

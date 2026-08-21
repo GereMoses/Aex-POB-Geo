@@ -18,7 +18,8 @@ from ..models.emergency import (
     EmergencyPlan, EmergencyPanicLog, Transport, TransportMaintenance,
     FlightLog, TransportCrew, TransportSchedule, TransportInventory,
     EmergencyEventType, EmergencyStatus, EmergencyScope, EmergencyInitiatedType,
-    NotificationChannel, NotificationStatus, RecipientType, PanicType
+    NotificationChannel, NotificationStatus, RecipientType, PanicType,
+    TransportType, TransportStatus
 )
 from ..models.biotime_models import EmergencyDevice
 from ..models.biotime_models import (

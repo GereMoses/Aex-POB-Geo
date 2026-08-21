@@ -5,7 +5,7 @@ This service handles personnel data export functionality including
 CSV, Excel, PDF, and JSON export formats with customizable templates.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Union
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
@@ -13,8 +13,12 @@ import csv
 import io
 import json
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 from ..models.personnel import Personnel, PersonnelStatus
 from ..core.database import get_db

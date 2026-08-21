@@ -4,7 +4,7 @@ Handles PDF, Excel, and CSV exports with company branding
 """
 
 from typing import Dict, List, Any, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from decimal import Decimal
 import io
 import os

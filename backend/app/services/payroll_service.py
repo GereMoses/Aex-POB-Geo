@@ -13,7 +13,7 @@ import logging
 from ..models.payroll import (
     PayStructure, PayItem, PayStructureAssign, PayPeriod, PaySalary, PaySalaryItem,
     PayLoan, PayLoanDeduction, PayZoneAllowance, PayContractorRate, PayAttendanceMapping,
-    PayCalculationLog, PayCalcStatus
+    PayCalculationLog, PayCalcStatus, PayPeriodStatus, PayLoanStatus
 )
 from ..models.personnel import Personnel
 from ..models.department import Department

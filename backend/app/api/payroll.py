@@ -5,7 +5,7 @@ Complete REST API for payroll management and calculations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text, and_, or_
 from typing import List, Dict, Any, Optional
 from datetime import datetime, date
 from pydantic import BaseModel, Field

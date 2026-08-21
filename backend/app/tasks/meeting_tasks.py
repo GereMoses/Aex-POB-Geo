@@ -59,7 +59,7 @@ def auto_unlock_meeting_rooms():
                     # Get device SN for the door
                     device = device_service.get_device_by_door_id(room.door_id)
                     if device:
-                        result = await adms.send_relay_command(
+                        result = await adms_service.send_relay_command(
                             device_sn=device.sn,
                             command="RELAY_ON",
                             duration=30  # Unlock for 30 seconds
@@ -124,7 +124,7 @@ def auto_lock_meeting_rooms():
                     # Get device SN for the door
                     device = device_service.get_device_by_door_id(room.door_id)
                     if device:
-                        result = await adms.send_relay_command(
+                        result = await adms_service.send_relay_command(
                             device_sn=device.sn,
                             command="RELAY_OFF"
                         )
@@ -339,7 +339,7 @@ def emergency_mustering_unlock():
                     # Get device SN for the door
                     device = device_service.get_device_by_door_id(room.door_id)
                     if device:
-                        result = await adms.send_relay_command(
+                        result = await adms_service.send_relay_command(
                             device_sn=device.sn,
                             command="RELAY_ON",
                             duration=0  # Keep unlocked until manually locked

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
 from app.core.database import get_db
-from app.models.visitor import VisitorVisitLog, VisitorType, Visitor
+from app.models.visitor import VisitorVisitLog, VisitorType, Visitor, VisitorPreRegistration
 from app.models.emergency import MusteringEvent, MusteringExpected, MusteringLog
 from app.services.visitor_service import VisitorService
 from app.core.email import send_email
