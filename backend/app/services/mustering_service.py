@@ -390,13 +390,26 @@ class MusteringService:
             if not zone:
                 raise ValueError(f"No mustering zone found for device {device_sn}")
             
-            # Find active event — check both the primary zone_id and the JSONB zone_ids
-            # array so that punches at secondary muster stations are correctly captured.
+            # Find the active event this punch belongs to.
+            #
+            # A muster reader stands AT AN ASSEMBLY POINT, so its zone is a
+            # MUSTER_POINT — and start_mustering_event deliberately strips muster
+            # points out of zone_ids, which holds the AFFECTED (source) zones:
+            #     zone_ids = [z for z in zone_ids if z not in all_muster_ids]
+            # Matching only on zone_id/zone_ids therefore could never match a real
+            # assembly-point punch: everyone stayed MISSING no matter how many
+            # people scanned in. The destination zones must be considered too.
+            #
+            # (Perversely, a muster reader with NO zone configured used to work,
+            # because the fallback above borrows the event's affected zone — so a
+            # correctly configured reader failed while an unconfigured one passed.)
             event = self.db.query(MusteringEvent).filter(
                 and_(
                     or_(
                         MusteringEvent.zone_id == zone.id,
                         MusteringEvent.zone_ids.contains([zone.id]),
+                        MusteringEvent.muster_zone_id == zone.id,
+                        MusteringEvent.muster_zone_ids.contains([zone.id]),
                     ),
                     MusteringEvent.status == 0  # Active
                 )
