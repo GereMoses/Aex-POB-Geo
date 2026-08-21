@@ -10,7 +10,9 @@ auto-detected from whatever creds are present.
     SMS_PROVIDER=termii
     SMS_API_KEY               Termii API key (required)
     SMS_SENDER_ID             approved sender ID (default "N-Alert")
-    SMS_CHANNEL               generic | dnd | whatsapp (default "generic")
+    SMS_CHANNEL               generic | dnd | whatsapp (default "dnd" — the
+                              transactional route; "generic" is blocked for
+                              the 100M+ numbers on Nigeria's NCC DND list)
     SMS_DEFAULT_COUNTRY_CODE  digits prepended to local 0-numbers (default "234")
     TERMII_BASE_URL           default https://api.ng.termii.com
 
@@ -113,7 +115,16 @@ def send_sms(to: Union[str, Iterable[str]], message: str) -> Dict[str, object]:
         }
 
     if provider == "termii":
-        return _send_termii(recipients, message, os.getenv("SMS_CHANNEL", "generic"))
+        # Default to the DND route, NOT "generic".
+        #
+        # Nigeria's NCC Do-Not-Disturb list carries over 100 million numbers, and
+        # the generic/promotional route is BLOCKED for every one of them. Only the
+        # transactional route ("dnd" at Termii — the same one OTPs use) reaches a
+        # DND-registered handset. With the old default a muster alert would have
+        # been silently dropped for a large share of the workforce: the send
+        # reports success, the phone never rings. Override with SMS_CHANNEL if a
+        # deployment is outside Nigeria.
+        return _send_termii(recipients, message, os.getenv("SMS_CHANNEL", "dnd"))
     if provider == "twilio":
         return _send_twilio(recipients, message)
     if provider == "africastalking":
