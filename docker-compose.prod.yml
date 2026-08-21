@@ -252,6 +252,17 @@ services:
     depends_on:
       - frontend
       - backend
+    # Actually SERVE a page, don't just check nginx is alive. nginx stays "up"
+    # perfectly happily while unable to resolve its upstreams — which is exactly
+    # what a lost pob_internal attachment looks like: every request 502s while
+    # `docker ps` reports the container healthy and nothing anywhere is red.
+    # Hitting / proves nginx can still reach pob_frontend.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider --no-check-certificate https://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - pob_internal
       - pob_external
