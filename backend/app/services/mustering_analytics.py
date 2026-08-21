@@ -11,8 +11,13 @@ import logging
 
 from app.models.biotime_models import (
     MusteringEvent, MusteringLog, PersonnelEmployee,
-    MusteringDrillSchedule, MusteringTemplate
+    MusteringDrillSchedule,
 )
+# NOTE: this module used to import `MusteringTemplate`, which does not exist —
+# the model is MusteringEventTemplate (table: mustering_template). It was never
+# referenced anywhere in this file, so the only thing the bad name achieved was
+# an ImportError that took down all four analytics endpoints. Import the real
+# name here if template-based analytics are added later.
 from app.models.zone import Zone
 
 logger = logging.getLogger(__name__)
@@ -499,7 +504,11 @@ class MusteringAnalyticsService:
                     'total_events': 0,
                     'avg_completion_time': 0,
                     'total_safe': 0,
-                    'total_expected': 0
+                    'total_expected': 0,
+                    # Appended to below for every completed event; without it the
+                    # first completed event raised KeyError and took the whole
+                    # event-performance report down.
+                    'completion_times': []
                 }
             
             zone_performance[zone_id]['total_events'] += 1

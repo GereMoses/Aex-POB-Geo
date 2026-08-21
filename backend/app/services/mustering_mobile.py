@@ -25,6 +25,23 @@ class MobileMusteringService:
     def __init__(self, db: Session):
         self.db = db
     
+    def _known_device_sn(self, sn):
+        """Return sn only if it is a REGISTERED terminal, else None.
+
+        mustering_log.device_sn is a FK to iclock_terminal.sn. A mobile check-in
+        has no reader behind it, and writing a placeholder like 'MOBILE_APP' or
+        'EMERGENCY_UPLOAD' violated that constraint — so every marshal check-in
+        and every emergency photo failed outright. The human-readable source is
+        kept in device_alias, which has no such constraint.
+        """
+        if not sn:
+            return None
+        from sqlalchemy import text as _text
+        row = self.db.execute(
+            _text("SELECT 1 FROM iclock_terminal WHERE sn = :s"), {"s": sn}
+        ).fetchone()
+        return sn if row else None
+
     def register_mobile_checkin(
         self,
         event_id: int,
@@ -58,21 +75,34 @@ class MobileMusteringService:
             if not employee:
                 raise ValueError(f"Employee {emp_code} not found")
             
-            # Create mobile check-in log
-            mobile_log = MusteringLog(
-                event_id=event_id,
-                emp_code=emp_code,
-                emp_name=f"{employee.first_name or ''} {employee.last_name}".strip(),
-                check_time=datetime.utcnow(),
-                device_sn=device_info.get('device_sn') if device_info else 'MOBILE_APP',
-                device_alias=device_info.get('device_name') if device_info else 'Mobile App',
-                status=1,  # Safe
-                gps=gps_coordinates,
-                photo=photo_base64,
-                notes=notes
-            )
-            
-            self.db.add(mobile_log)
+            # Starting a muster creates one roll-call row per expected person.
+            # A marshal checking someone in must UPDATE that row — inserting a
+            # second one left the person counted as BOTH safe and missing, so the
+            # headcount read 2 safe / 2 missing for two people. This mirrors what
+            # the ADMS punch path (mustering_service.process_mustering_punch)
+            # already does.
+            mobile_log = self.db.query(MusteringLog).filter(
+                and_(
+                    MusteringLog.event_id == event_id,
+                    MusteringLog.emp_code == emp_code,
+                )
+            ).first()
+
+            if mobile_log is None:
+                mobile_log = MusteringLog(event_id=event_id, emp_code=emp_code)
+                self.db.add(mobile_log)
+
+            mobile_log.emp_name = f"{employee.first_name or ''} {employee.last_name}".strip()
+            mobile_log.check_time = datetime.utcnow()
+            mobile_log.device_sn = self._known_device_sn(device_info.get('device_sn') if device_info else None)
+            mobile_log.device_alias = device_info.get('device_name') if device_info else 'Mobile App'
+            mobile_log.status = 1  # Safe
+            mobile_log.gps = gps_coordinates
+            if photo_base64:
+                mobile_log.photo = photo_base64
+            if notes:
+                mobile_log.notes = notes
+
             self.db.commit()
             
             # Update event headcount
@@ -82,6 +112,11 @@ class MobileMusteringService:
             
             return {
                 "success": True,
+                # The API broadcasts this result and reads event_id from
+                # it — without the key the check-in raised KeyError AFTER
+                # the person had already been marked safe, so the marshal
+                # saw an error for an action that had actually succeeded.
+                "event_id": event_id,
                 "checkin_id": mobile_log.id,
                 "emp_code": emp_code,
                 "emp_name": f"{employee.first_name or ''} {employee.last_name}".strip(),
@@ -190,11 +225,14 @@ class MobileMusteringService:
                 raise ValueError(f"Employee {emp_code} not found")
             
             # Create or update emergency photo log
+            # Filter on MusteringLog.event_id. This used to say
+            # `MusteringEvent.id == event_id` inside a MusteringLog query, which
+            # is a cartesian product across the two tables (SQLAlchemy warned
+            # about it at runtime) and could attach the photo to the wrong row.
             existing_log = self.db.query(MusteringLog).filter(
                 and_(
-                    MusteringEvent.id == event_id,
+                    MusteringLog.event_id == event_id,
                     MusteringLog.emp_code == emp_code,
-                    MusteringLog.device_sn.like('EMERGENCY_PHOTO_%')
                 )
             ).first()
             
@@ -203,6 +241,12 @@ class MobileMusteringService:
                 existing_log.photo = photo_base64
                 existing_log.gps = gps_coordinates
                 existing_log.notes = description
+                # A photo at the assembly point IS proof of presence — the create
+                # branch already set status=1, but the update branch left the
+                # person MISSING, so photographing someone who was already on the
+                # roll call did not account for them.
+                existing_log.status = 1
+                existing_log.device_alias = 'Emergency Photo Upload'
                 existing_log.check_time = datetime.utcnow()
                 self.db.commit()
                 
@@ -214,7 +258,7 @@ class MobileMusteringService:
                     emp_code=emp_code,
                     emp_name=f"{employee.first_name or ''} {employee.last_name}".strip(),
                     check_time=datetime.utcnow(),
-                    device_sn='EMERGENCY_UPLOAD',
+                    device_sn=None,   # no reader behind an uploaded photo
                     device_alias='Emergency Photo Upload',
                     status=1,  # Safe (photo indicates person is accounted for)
                     gps=gps_coordinates,
@@ -233,6 +277,10 @@ class MobileMusteringService:
             
             return {
                 "success": True,
+                # The API layer broadcasts this result and reads event_id
+                # from it; without the key every upload raised KeyError
+                # AFTER the photo had already been stored.
+                "event_id": event_id,
                 "photo_id": log_id,
                 "emp_code": emp_code,
                 "upload_time": datetime.utcnow().isoformat(),

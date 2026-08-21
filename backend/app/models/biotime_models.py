@@ -366,6 +366,12 @@ class MusteringLog(Base):
     last_punch_area = Column(String(20), nullable=True)
     location = Column(String(100), nullable=True)
     notes = Column(Text, nullable=True)
+    # Mobile muster check-in (a marshal accounting for someone by hand at the
+    # assembly point). mustering_mobile.py has always written these two, but they
+    # were never declared or created, so every mobile check-in failed with
+    # "'gps' is an invalid keyword argument for MusteringLog".
+    gps = Column(String(50), nullable=True)      # "lat,lon" captured by the device
+    photo = Column(Text, nullable=True)          # base64 proof-of-presence image
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # Relationships

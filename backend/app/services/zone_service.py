@@ -8,8 +8,8 @@ geographical concept for device assignment and personnel access control.
 import logging
 from typing import Dict, List, Optional, Any
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, func
-from datetime import datetime, timezone
+from sqlalchemy import and_, or_, func, text
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -1977,3 +1977,161 @@ class ZoneService:
                 "success": False,
                 "error": f"Failed to get zone reader status: {str(e)}"
             }
+
+    # ── Personnel-location views ─────────────────────────────────────────────
+    # These four are called by api/personnel.py but had never been written, so
+    # /location-summary, /zone-capacity, /location-analytics and /by-location all
+    # returned 500 ("'ZoneService' object has no attribute ..."). Zone occupancy is
+    # derived from personnel.current_zone_id, which access-control readers maintain.
+
+    async def get_current_location_summary(self, db: Session) -> Dict[str, Any]:
+        """Where everyone currently is, one row per zone plus an unassigned bucket."""
+        try:
+            rows = db.execute(text("""
+                SELECT z.id, z.name, z.code, z.zone_type,
+                       COALESCE(z.max_capacity, 0)          AS max_capacity,
+                       COUNT(p.id) FILTER (WHERE p.is_active) AS headcount
+                FROM zones z
+                LEFT JOIN personnel p ON p.current_zone_id = z.id
+                WHERE COALESCE(z.is_active, TRUE)
+                GROUP BY z.id, z.name, z.code, z.zone_type, z.max_capacity
+                ORDER BY z.name
+            """)).fetchall()
+            unassigned = db.execute(text(
+                "SELECT COUNT(*) FROM personnel WHERE is_active AND current_zone_id IS NULL"
+            )).scalar() or 0
+            on_pob = db.execute(text(
+                "SELECT COUNT(*) FROM personnel WHERE is_active AND is_pob"
+            )).scalar() or 0
+            zones = [{
+                "zone_id": r.id, "zone_name": r.name, "zone_code": r.code,
+                "zone_type": r.zone_type, "headcount": int(r.headcount or 0),
+                "max_capacity": int(r.max_capacity or 0),
+            } for r in rows]
+            return {
+                "success": True,
+                "total_personnel": sum(z["headcount"] for z in zones) + int(unassigned),
+                "on_pob": int(on_pob),
+                "unassigned": int(unassigned),
+                "zones": zones,
+                "generated_at": datetime.utcnow().isoformat(),
+            }
+        except Exception as e:
+            logger.error(f"get_current_location_summary failed: {e}")
+            return {"success": False, "error": str(e), "zones": []}
+
+    async def get_zone_capacity_status(
+        self, db: Session, zone: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Occupancy against max_capacity, flagging zones at or over their limit.
+
+        `zone` optionally narrows to a single zone by name or code — the API
+        exposes it as a query parameter.
+        """
+        try:
+            params = {}
+            narrow = ""
+            if zone:
+                narrow = " AND (LOWER(z.name) = LOWER(:zone) OR LOWER(z.code) = LOWER(:zone))"
+                params["zone"] = zone
+            rows = db.execute(text(f"""
+                SELECT z.id, z.name, z.code, COALESCE(z.max_capacity, 0) AS max_capacity,
+                       COUNT(p.id) FILTER (WHERE p.is_active) AS headcount
+                FROM zones z
+                LEFT JOIN personnel p ON p.current_zone_id = z.id
+                WHERE COALESCE(z.is_active, TRUE){narrow}
+                GROUP BY z.id, z.name, z.code, z.max_capacity
+                ORDER BY z.name
+            """), params).fetchall()
+            zones = []
+            for r in rows:
+                cap, head = int(r.max_capacity or 0), int(r.headcount or 0)
+                # A zone with no configured capacity cannot be over it — report
+                # utilisation as None rather than dividing by zero.
+                pct = round(head / cap * 100, 1) if cap > 0 else None
+                zones.append({
+                    "zone_id": r.id, "zone_name": r.name, "zone_code": r.code,
+                    "headcount": head, "max_capacity": cap,
+                    "utilization_percent": pct,
+                    "status": ("unlimited" if cap == 0 else
+                               "over_capacity" if head > cap else
+                               "at_capacity" if head == cap else
+                               "near_capacity" if pct is not None and pct >= 85 else "ok"),
+                })
+            return {
+                "success": True,
+                "zones": zones,
+                "over_capacity": [z for z in zones if z["status"] == "over_capacity"],
+                "generated_at": datetime.utcnow().isoformat(),
+            }
+        except Exception as e:
+            logger.error(f"get_zone_capacity_status failed: {e}")
+            return {"success": False, "error": str(e), "zones": []}
+
+    async def get_location_analytics(self, db: Session, hours: int = 24) -> Dict[str, Any]:
+        """Zone movement over a window, derived from access-control punches."""
+        try:
+            since = datetime.utcnow() - timedelta(hours=int(hours))
+            movements = db.execute(text("""
+                SELECT COALESCE(z.name, t.area_alias, 'Unknown') AS zone_name,
+                       COUNT(*) AS movements,
+                       COUNT(DISTINCT t.emp_code) AS unique_personnel
+                FROM iclock_transaction t
+                LEFT JOIN iclock_terminal term ON term.sn = t.terminal_sn
+                LEFT JOIN zones z ON z.id = term.zone_id
+                WHERE t.punch_time >= :since
+                GROUP BY 1 ORDER BY movements DESC
+            """), {"since": since}).fetchall()
+            busiest = db.execute(text("""
+                SELECT date_trunc('hour', punch_time) AS hour, COUNT(*) AS movements
+                FROM iclock_transaction WHERE punch_time >= :since
+                GROUP BY 1 ORDER BY movements DESC LIMIT 1
+            """), {"since": since}).fetchone()
+            return {
+                "success": True,
+                "window_hours": int(hours),
+                "since": since.isoformat(),
+                "by_zone": [{"zone_name": r.zone_name, "movements": int(r.movements),
+                             "unique_personnel": int(r.unique_personnel)} for r in movements],
+                "total_movements": sum(int(r.movements) for r in movements),
+                "busiest_hour": busiest.hour.isoformat() if busiest and busiest.hour else None,
+                "busiest_hour_movements": int(busiest.movements) if busiest else 0,
+                "generated_at": datetime.utcnow().isoformat(),
+            }
+        except Exception as e:
+            logger.error(f"get_location_analytics failed: {e}")
+            return {"success": False, "error": str(e), "by_zone": []}
+
+    async def get_personnel_by_location(
+        self, db: Session, location: Optional[str] = None,
+        zone: Optional[str] = None, status: Optional[Any] = None,
+    ) -> List[Dict[str, Any]]:
+        """Personnel filtered by zone name/code and/or status."""
+        try:
+            clauses, params = ["p.is_active"], {}
+            if zone:
+                clauses.append("(LOWER(z.name) = LOWER(:zone) OR LOWER(z.code) = LOWER(:zone))")
+                params["zone"] = zone
+            if location:
+                clauses.append("LOWER(COALESCE(z.name, '')) LIKE LOWER(:loc)")
+                params["loc"] = f"%{location}%"
+            if status is not None:
+                clauses.append("UPPER(COALESCE(p.status, '')) = UPPER(:st)")
+                params["st"] = getattr(status, "value", str(status))
+            rows = db.execute(text(f"""
+                SELECT p.id, p.emp_code, p.full_name, p.department, p.status,
+                       p.is_pob, z.name AS zone_name, z.code AS zone_code, p.last_seen
+                FROM personnel p
+                LEFT JOIN zones z ON z.id = p.current_zone_id
+                WHERE {' AND '.join(clauses)}
+                ORDER BY p.emp_code
+            """), params).fetchall()
+            return [{
+                "id": r.id, "emp_code": r.emp_code, "full_name": r.full_name,
+                "department": r.department, "status": r.status, "is_pob": r.is_pob,
+                "zone_name": r.zone_name, "zone_code": r.zone_code,
+                "last_seen": r.last_seen.isoformat() if r.last_seen else None,
+            } for r in rows]
+        except Exception as e:
+            logger.error(f"get_personnel_by_location failed: {e}")
+            return []

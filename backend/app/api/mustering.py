@@ -1256,7 +1256,10 @@ async def get_realtime_analytics(
 
 # Mobile Mustering endpoints
 
+# The mobile view calls /check-in/ (hyphenated). Accept both: a marshal
+# checking someone in during a live muster must not 404 over a hyphen.
 @router.post("/api/mustering/mobile/checkin")
+@router.post("/api/mustering/mobile/check-in")
 async def mobile_checkin(
     checkin_data: dict,
     current_user: AuthUser = Depends(get_current_user),
@@ -1325,44 +1328,46 @@ async def get_mobile_checkins(
         logger.error(f"Error getting mobile check-ins: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# @router.post("/api/mustering/mobile/emergency-photo")
-# async def upload_emergency_photo(
-#     photo_data: dict,
-#     current_user: AuthUser = Depends(get_current_user),
-#     db: Session = Depends(get_db)
-# ):
-#     """Upload emergency photo during mustering"""
-#     try:
-#         from app.services.mustering_mobile import MobileMusteringService
-#         mobile_service = MobileMusteringService(db)
-#         
-#         result = mobile_service.upload_emergency_photo(
-#             event_id=photo_data.get("event_id"),
-#             emp_code=photo_data.get("emp_code"),
-#             photo_base64=photo_data.get("photo_base64"),
-#             gps_coordinates=photo_data.get("gps_coordinates"),
-#             taken_by=current_user.id,
-#             description=photo_data.get("description")
-#         )
-#         
-#         # Broadcast real-time update
-#         from app.api.mustering import manager
-#         await manager.broadcast_to_event(
-#             result["event_id"],
-#             json.dumps({
-#                 "type": "emergency_photo",
-#                 "data": result
-#             })
-#         )
-#         
-#         return {"success": True, "data": result}
-#         
-#     except ValueError as e:
-#         logger.error(f"Validation error in emergency photo upload: {e}")
-#         raise HTTPException(status_code=400, detail=str(e))
-#     except Exception as e:
-#         logger.error(f"Error uploading emergency photo: {e}")
-#         raise HTTPException(status_code=500, detail=str(e))
+# The mobile view posts to /upload-photo/; keep the original name too.
+@router.post("/api/mustering/mobile/emergency-photo")
+@router.post("/api/mustering/mobile/upload-photo")
+async def upload_emergency_photo(
+    photo_data: dict,
+    current_user: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload emergency photo during mustering"""
+    try:
+        from app.services.mustering_mobile import MobileMusteringService
+        mobile_service = MobileMusteringService(db)
+        
+        result = mobile_service.upload_emergency_photo(
+            event_id=photo_data.get("event_id"),
+            emp_code=photo_data.get("emp_code"),
+            photo_base64=photo_data.get("photo_base64"),
+            gps_coordinates=photo_data.get("gps_coordinates"),
+            taken_by=current_user.id,
+            description=photo_data.get("description")
+        )
+        
+        # Broadcast real-time update
+        from app.api.mustering import manager
+        await manager.broadcast_to_event(
+            result["event_id"],
+            json.dumps({
+                "type": "emergency_photo",
+                "data": result
+            })
+        )
+        
+        return {"success": True, "data": result}
+        
+    except ValueError as e:
+        logger.error(f"Validation error in emergency photo upload: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error uploading emergency photo: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/api/mustering/mobile/emergency-alert")
 async def send_emergency_alert(

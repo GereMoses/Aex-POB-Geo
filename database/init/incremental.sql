@@ -204,3 +204,11 @@ DROP TRIGGER IF EXISTS trg_sync_auth_user ON public.auth_user;
 CREATE TRIGGER trg_sync_auth_user
     AFTER INSERT OR UPDATE ON public.auth_user
     FOR EACH ROW EXECUTE FUNCTION public.sync_auth_user_to_users();
+
+-- ── Mustering: mobile check-in fields ────────────────────────────────────────
+-- A marshal checking someone in from the mobile view records where they were
+-- standing and (optionally) a photo. mustering_mobile.py has always written
+-- these, but the columns never existed, so every mobile check-in failed with
+-- "'gps' is an invalid keyword argument for MusteringLog".
+ALTER TABLE public.mustering_log ADD COLUMN IF NOT EXISTS gps   varchar(50);
+ALTER TABLE public.mustering_log ADD COLUMN IF NOT EXISTS photo text;
