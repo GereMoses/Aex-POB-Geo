@@ -10,7 +10,11 @@
 # ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-COMPOSE="docker compose -f docker-compose.prod.yml"
+# --env-file .env.prod is REQUIRED: compose only auto-loads `.env`, so without
+# this the ${DATABASE_USER} / ${GRAFANA_PASSWORD} placeholders in the compose
+# file interpolate to empty and the run aborts before it builds anything.
+# (`env_file: .env.prod` inside the YAML only populates the CONTAINERS.)
+COMPOSE="docker compose --env-file .env.prod -f docker-compose.prod.yml"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 info()    { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
@@ -26,6 +30,36 @@ preflight() {
   [ -f "nginx/certs/privkey.pem"  ] || warn "SSL key not found at nginx/certs/privkey.pem — HTTPS will not work."
   command -v docker &>/dev/null      || error "Docker not installed. Run: bash scripts/setup-server.sh"
   docker compose version &>/dev/null || error "Docker Compose not installed."
+}
+
+# ── Network guard ─────────────────────────────────────────────────────────────
+# Recreating a single service intermittently leaves a multi-network container
+# attached to only ONE of its declared networks. When the backend loses
+# pob_internal it can no longer resolve `postgres` / `redis`: every login returns
+# "Login service temporarily unavailable" and the UI fills with 504s, while the
+# container still reports as running. Verify and repair after any up/restart.
+ensure_networks() {
+  local svc nets n missing=0
+  for entry in "pob_backend:pob_internal pob_external" \
+               "pob_celery_worker:pob_internal pob_external" \
+               "pob_celery_beat:pob_internal" \
+               "pob_frontend:pob_internal" \
+               "pob_nginx:pob_internal pob_external"; do
+    svc="${entry%%:*}"; nets="${entry#*:}"
+    docker inspect "$svc" &>/dev/null || continue
+    for n in $nets; do
+      if ! docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$svc" | grep -qw "$n"; then
+        warn "$svc was not attached to $n — reconnecting"
+        docker network connect "$n" "$svc" && missing=1
+      fi
+    done
+  done
+  if [ "$missing" = "1" ]; then
+    warn "Restarting affected services so the new attachment takes effect..."
+    $COMPOSE restart backend celery-worker nginx >/dev/null 2>&1 || true
+  else
+    info "Network attachments verified."
+  fi
 }
 
 # ── Deploy (first time) ───────────────────────────────────────────────────────
@@ -44,6 +78,8 @@ deploy() {
 
   step "Waiting for services to be healthy..."
   sleep 15
+
+  ensure_networks
 
   show_status
 }
@@ -64,6 +100,8 @@ update() {
   $COMPOSE up -d --no-deps --remove-orphans frontend celery-worker celery-beat
   $COMPOSE up -d --no-deps --remove-orphans nginx
 
+  ensure_networks
+
   info "Update complete."
   show_status
 }
@@ -72,6 +110,7 @@ update() {
 restart() {
   step "POB System — Restart"
   $COMPOSE restart
+  ensure_networks
   show_status
 }
 

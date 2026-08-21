@@ -157,6 +157,12 @@ _LICENSE_BYPASS_PREFIXES = (
     "/api/v1/auth/",
     "/api/v1/subscription/status", "/api/v1/subscription/activate",
     "/iclock/", "/api/v1/iclock/",
+    # Machine-to-machine callbacks that authenticate by their own means and have
+    # no bearer token to offer. Readers push on /iclock/; SeamlessHR posts
+    # HMAC-SHA512-signed employee events here. Blocking these on licence state
+    # loses data silently — the sender gets the 402, the operator sees nothing,
+    # and employee changes simply stop arriving.
+    "/api/v1/hr-integration/webhook",
 )
 
 import time as _time
@@ -213,7 +219,22 @@ class LicenseMiddleware(_BaseHTTPMiddleware):
         if _license_cache["status"] in ("active", "unknown"):
             return await call_next(request)
 
-        # License expired or missing — allow Global Admins through
+        # License expired or missing — allow Global Admins through.
+        from .core.database import SessionLocal
+        from sqlalchemy import text as _text
+
+        def _is_global_admin(where: str, value) -> bool:
+            db = SessionLocal()
+            try:
+                row = db.execute(_text(
+                    f"SELECT COALESCE(is_global_admin, FALSE) FROM auth_user WHERE {where}"
+                ), value).fetchone()
+                return bool(row and row[0])
+            except Exception:
+                return False
+            finally:
+                db.close()
+
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             token = auth_header[7:]
@@ -221,20 +242,27 @@ class LicenseMiddleware(_BaseHTTPMiddleware):
                 payload = _jwt.decode(
                     token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
                 )
-                sub = payload.get("sub", "")
-                from .core.database import SessionLocal
-                from sqlalchemy import text as _text
-                db = SessionLocal()
-                try:
-                    row = db.execute(_text(
-                        "SELECT COALESCE(is_global_admin, FALSE) FROM auth_user WHERE username = :u OR email = :u"
-                    ), {"u": sub}).fetchone()
-                    if row and row[0]:
-                        return await call_next(request)
-                finally:
-                    db.close()
+                if _is_global_admin("username = :u OR email = :u", {"u": payload.get("sub", "")}):
+                    return await call_next(request)
             except (_JWTError, Exception):
                 pass
+        else:
+            # SSE endpoints (EventSource) cannot send an Authorization header, so
+            # they authenticate with a short-lived ?ticket=. Without this branch a
+            # Global Admin is let through everywhere EXCEPT their notification and
+            # punch streams, which then reconnect in a tight loop against a 402.
+            # Read-only lookup — the ticket is left for the stream handler to use.
+            ticket = request.query_params.get("ticket")
+            if ticket:
+                try:
+                    from .core.redis_client import get_redis_client
+                    uid = get_redis_client().get(f"sse_ticket:{ticket}")
+                    if uid:
+                        uid = uid.decode() if isinstance(uid, bytes) else str(uid)
+                        if _is_global_admin("id = :i", {"i": int(uid)}):
+                            return await call_next(request)
+                except Exception:
+                    pass
 
         return _JSONResponse(
             status_code=402,
@@ -946,13 +974,29 @@ async def startup_event():
     try:
         _mdb = SessionLocal()
         try:
-            for _stmt in [
-                "ALTER TABLE sys_subscription ALTER COLUMN expiry_date TYPE TIMESTAMPTZ USING expiry_date::TIMESTAMPTZ",
-                "ALTER TABLE sys_renewal_log ALTER COLUMN previous_expiry TYPE TIMESTAMPTZ USING previous_expiry::TIMESTAMPTZ",
-                "ALTER TABLE sys_renewal_log ALTER COLUMN new_expiry TYPE TIMESTAMPTZ USING new_expiry::TIMESTAMPTZ",
+            # ALTER COLUMN TYPE takes an ACCESS EXCLUSIVE lock and REWRITES the
+            # table — even when the column is already the target type. Probe
+            # information_schema first (ACCESS SHARE only) so a already-migrated
+            # database does no work and takes no exclusive lock on every boot.
+            for _tbl, _col in [
+                ("sys_subscription", "expiry_date"),
+                ("sys_renewal_log",  "previous_expiry"),
+                ("sys_renewal_log",  "new_expiry"),
             ]:
                 try:
-                    _mdb.execute(text(_stmt))
+                    _already = _mdb.execute(text(
+                        "SELECT 1 FROM information_schema.columns "
+                        "WHERE table_name = :t AND column_name = :c "
+                        "  AND data_type = 'timestamp with time zone'"
+                    ), {"t": _tbl, "c": _col}).fetchone()
+                    _mdb.commit()
+                    if _already:
+                        continue
+                    _mdb.execute(text("SET LOCAL lock_timeout = '5s'"))
+                    _mdb.execute(text(
+                        f"ALTER TABLE {_tbl} ALTER COLUMN {_col} "
+                        f"TYPE TIMESTAMPTZ USING {_col}::TIMESTAMPTZ"
+                    ))
                     _mdb.commit()
                 except Exception:
                     _mdb.rollback()

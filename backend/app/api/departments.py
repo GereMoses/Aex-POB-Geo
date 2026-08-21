@@ -483,9 +483,31 @@ async def assign_personnel(
         status="active",
     )
     db.add(assignment)
+
+    # Mirror the assignment onto the personnel record itself.
+    #
+    # Department membership is recorded in department_personnel (a person can sit
+    # in several), but the attendance engine resolves an employee's shift through
+    # personnel.department_id → departments.default_shift_id. Without this the
+    # Department screen appears to assign someone and their shift never changes,
+    # because nothing the engine reads was touched. The PRIMARY department is the
+    # one that decides the shift; a person's first assignment is primary by
+    # definition, since they had no department before it.
+    person = db.query(Personnel).filter(Personnel.id == data.personnel_id).first()
+    if person is not None:
+        had_primary = db.query(DepartmentPersonnel).filter(
+            DepartmentPersonnel.personnel_id == data.personnel_id,
+            DepartmentPersonnel.status == "active",
+            DepartmentPersonnel.is_primary.is_(True),
+        ).first()
+        if assignment.is_primary or had_primary is None or person.department_id is None:
+            person.department_id = department_id
+            person.department = dept.name
+
     db.commit()
     db.refresh(assignment)
-    return {"id": assignment.id, "department_id": department_id, "personnel_id": data.personnel_id, "status": "active"}
+    return {"id": assignment.id, "department_id": department_id, "personnel_id": data.personnel_id,
+            "status": "active", "primary_department_id": getattr(person, "department_id", None)}
 
 
 @router.delete("/{department_id}/personnel/{personnel_id}", status_code=204)
@@ -504,6 +526,26 @@ async def remove_personnel(
         raise HTTPException(status_code=404, detail="Active assignment not found")
     assignment.status = "transferred"
     assignment.unassigned_at = datetime.utcnow()
+
+    # If this was the department driving the employee's shift, move them to
+    # whatever active assignment remains, or clear it. Leaving personnel.department_id
+    # pointing at a department they were just removed from would keep applying that
+    # department's shift to their timesheet.
+    person = db.query(Personnel).filter(Personnel.id == personnel_id).first()
+    if person is not None and person.department_id == department_id:
+        remaining = db.query(DepartmentPersonnel).filter(
+            DepartmentPersonnel.personnel_id == personnel_id,
+            DepartmentPersonnel.status == "active",
+            DepartmentPersonnel.department_id != department_id,
+        ).order_by(DepartmentPersonnel.is_primary.desc(), DepartmentPersonnel.id).first()
+        if remaining:
+            other = db.query(Department).filter(Department.id == remaining.department_id).first()
+            person.department_id = remaining.department_id
+            person.department = other.name if other else None
+        else:
+            person.department_id = None
+            person.department = None
+
     db.commit()
 
 

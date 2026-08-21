@@ -203,8 +203,23 @@ def _ensure_bc_tables(db: Session) -> None:
                 updated_at     TIMESTAMPTZ  DEFAULT NOW()
             )
         """))
-        # Upgrade path for existing installs
-        db.execute(text("ALTER TABLE bc_integration_config ADD COLUMN IF NOT EXISTS options JSONB"))
+        # Upgrade path for existing installs.
+        #
+        # CRITICAL: only run ALTER TABLE when the column is actually absent.
+        # `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` still takes an ACCESS
+        # EXCLUSIVE lock even when the column already exists, and once that lock
+        # request queues behind any open transaction, every later reader of the
+        # table queues behind it too — which stalls the whole API, not just BC.
+        # The information_schema probe below takes only ACCESS SHARE, so on an
+        # already-migrated database this costs nothing and locks nothing.
+        # (Same failure and same remedy as _ensure_totp_column in api/mfa.py.)
+        has_options = db.execute(text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'bc_integration_config' AND column_name = 'options'"
+        )).fetchone()
+        if not has_options:
+            db.execute(text("SET LOCAL lock_timeout = '3s'"))
+            db.execute(text("ALTER TABLE bc_integration_config ADD COLUMN IF NOT EXISTS options JSONB"))
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS bc_sync_log (
                 id              SERIAL PRIMARY KEY,

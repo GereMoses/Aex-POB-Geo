@@ -5,6 +5,9 @@ from sqlalchemy import func, text
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import io
+import logging
+
+logger = logging.getLogger(__name__)
 
 from ..core.database import get_db
 from ..core.dependencies import get_current_user
@@ -688,6 +691,29 @@ async def update_personnel(
         person.full_name = f"{person.first_name or ''} {person.last_name or ''}".strip()
     if "is_onboard" in data:
         person.is_pob = data["is_onboard"]
+
+    # Department is stored twice — department_id (the real link) and department
+    # (a display name). They must never disagree: shifts hang off the ID via
+    # departments.default_shift_id, while every screen shows the NAME. A caller
+    # that sets only one leaves a record that reads "Maintenance" but inherits
+    # Marine's night shift. Reconcile whichever side was supplied.
+    if "department_id" in data and "department" not in data:
+        if person.department_id:
+            drow = db.execute(
+                text("SELECT name FROM departments WHERE id = :i"), {"i": person.department_id}
+            ).fetchone()
+            person.department = drow[0] if drow else None
+        else:
+            person.department = None
+    elif "department" in data and "department_id" not in data:
+        if person.department:
+            drow = db.execute(text(
+                "SELECT id FROM departments WHERE lower(name) = lower(:n) OR lower(code) = lower(:n) "
+                "ORDER BY id LIMIT 1"
+            ), {"n": person.department}).fetchone()
+            person.department_id = drow[0] if drow else None
+        else:
+            person.department_id = None
 
     db.commit()
     db.refresh(person)

@@ -29,8 +29,11 @@ class DeviceSync(BaseModel):
     device_id: str
     personnel_id: int
 
-# Initialize service
-biometric_service = BiometricService()
+# Build the service PER REQUEST, bound to that request's session.
+# A module-level singleton shared one never-closed session across every
+# request, so one failing call broke the next unrelated one.
+def _svc(db: Session) -> BiometricService:
+    return BiometricService(db)
 
 @router.post("/enroll")
 async def enroll_biometric(
@@ -48,7 +51,7 @@ async def enroll_biometric(
         Enrollment result
     """
     try:
-        result = await biometric_service.enroll_personnel_biometric(
+        result = await _svc(db).enroll_personnel_biometric(
             personnel_id=enrollment_data.personnel_id,
             biometric_data=enrollment_data.biometric_data
         )
@@ -85,7 +88,7 @@ async def revoke_biometric_access(
         Revocation result
     """
     try:
-        result = await biometric_service.revoke_biometric_access(
+        result = await _svc(db).revoke_biometric_access(
             personnel_id=revocation_data.personnel_id,
             reason=revocation_data.reason
         )
@@ -122,7 +125,7 @@ async def get_biometric_status(
         Biometric status information
     """
     try:
-        result = await biometric_service.get_biometric_status(personnel_id)
+        result = await _svc(db).get_biometric_status(personnel_id)
         
         if not result["success"]:
             raise HTTPException(
@@ -154,7 +157,7 @@ async def get_biometric_analytics(
         Biometric analytics data
     """
     try:
-        result = await biometric_service.get_biometric_analytics()
+        result = await _svc(db).get_biometric_analytics()
         
         if not result["success"]:
             raise HTTPException(
@@ -188,7 +191,7 @@ async def sync_with_zkteco_device(
         Sync result
     """
     try:
-        result = await biometric_service.sync_with_zkteco_device(
+        result = await _svc(db).sync_with_zkteco_device(
             device_id=sync_data.device_id,
             personnel_id=sync_data.personnel_id
         )
@@ -225,7 +228,7 @@ async def get_device_biometric_status(
         Device biometric status
     """
     try:
-        result = await biometric_service.get_device_biometric_status(device_id)
+        result = await _svc(db).get_device_biometric_status(device_id)
         
         if not result["success"]:
             raise HTTPException(
@@ -258,7 +261,7 @@ async def get_biometric_dashboard(
     """
     try:
         # Get analytics
-        analytics = await biometric_service.get_biometric_analytics()
+        analytics = await _svc(db).get_biometric_analytics()
         
         if not analytics["success"]:
             raise HTTPException(

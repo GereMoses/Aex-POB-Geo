@@ -4,7 +4,7 @@ Handles biometric enrollment, device management, and access control
 """
 
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, text
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import json
@@ -33,8 +33,26 @@ logger = logging.getLogger(__name__)
 class BiometricService:
     """Service for managing biometric enrollment and access control"""
     
-    def __init__(self):
-        self.db = next(get_db())
+    def __init__(self, db: Session = None):
+        """
+        Args:
+            db: the CALLER's request-scoped session. Always pass one.
+
+        The old default — `self.db = next(get_db())` evaluated once, at module
+        import — handed every request in the process a single shared session that
+        was never closed. Two consequences, both seen in practice:
+
+          * A method that raised without rolling back left that session in an
+            aborted transaction, so the NEXT, unrelated request failed with
+            "current transaction is aborted, commands ignored…" — an error about
+            somebody else's request.
+          * The session sat open permanently, showing up as `idle in transaction`
+            and able to block DDL (that is what stalled the whole API earlier).
+
+        The fallback below is kept only so any legacy caller that constructs the
+        service with no argument still works; it is not the intended path.
+        """
+        self.db = db if db is not None else next(get_db())
     
     async def enroll_personnel_biometric(
         self, 
@@ -68,11 +86,30 @@ class BiometricService:
             if personnel.compliance_score < 70:
                 personnel.compliance_score = min(100, personnel.compliance_score + 20)
             
-            # Add to access log if model exists
+            # Add to access log if model exists.
+            #
+            # access_logs.device_id is a FK to devices(device_id). The caller sends
+            # whatever the enrolling station reports, which is not necessarily a
+            # device registered here — and an unknown value aborts the whole
+            # enrolment with a foreign-key violation, losing the template for a
+            # bookkeeping row. Record the id only when it genuinely exists.
             if AccessLog is not None:
+                raw_device = biometric_data.get('device_id')
+                device_id = None
+                if raw_device is not None:
+                    known = self.db.execute(text(
+                        "SELECT 1 FROM devices WHERE device_id = :d"
+                    ), {"d": str(raw_device)}).fetchone()
+                    if known:
+                        device_id = raw_device
+                    else:
+                        logger.warning(
+                            "Biometric enrolment for personnel %s reported unknown device %r "
+                            "— logging without a device reference", personnel_id, raw_device
+                        )
                 access_log = AccessLog(
                     personnel_id=personnel_id,
-                    device_id=biometric_data.get('device_id'),
+                    device_id=device_id,
                     event_type='BIOMETRIC_ENROLLMENT',
                     timestamp=datetime.utcnow(),
                     access_granted=True,
@@ -140,7 +177,9 @@ class BiometricService:
                     event_type='BIOMETRIC_REVOCATION',
                     timestamp=datetime.utcnow(),
                     access_granted=False,
-                    reason=reason
+                    # The column is denial_reason — `reason` is not a mapped
+                    # attribute, so this raised on every revocation attempt.
+                    denial_reason=reason
                 )
                 self.db.add(access_log)
             
@@ -193,10 +232,18 @@ class BiometricService:
                     AccessLog.personnel_id == personnel_id
                 ).order_by(AccessLog.timestamp.desc()).limit(10).all()
             
-            # Get device access count
-            device_access_count = self.db.query(Device).filter(
-                Device.authorized_personnel.contains(personnel_id)
-            ).count()
+            # Get device access count.
+            #
+            # authorized_personnel is a JSONB array of personnel ids. SQLAlchemy's
+            # generic JSON `.contains(int)` compiles to a LIKE, which Postgres
+            # rejects outright: "operator does not exist: jsonb ~~ text". That made
+            # this endpoint fail every single time — and because the failure left
+            # the shared session in an aborted transaction, it also broke whichever
+            # request came next. Use the JSONB containment operator instead.
+            device_access_count = self.db.execute(text(
+                "SELECT count(*) FROM devices "
+                "WHERE authorized_personnel @> CAST(:pid AS jsonb)"
+            ), {"pid": json.dumps([personnel_id])}).scalar() or 0
             
             # Analyze biometric data
             biometric_data = personnel.biometric_data or {}
@@ -222,7 +269,7 @@ class BiometricService:
                         "event_type": log.event_type,
                         "device_id": log.device_id,
                         "access_granted": log.access_granted,
-                        "reason": log.reason
+                        "reason": log.denial_reason
                     }
                     for log in recent_logs
                 ],

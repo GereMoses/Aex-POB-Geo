@@ -406,9 +406,26 @@ async def list_permissions(db: Session = Depends(get_db)):
 
 # ─── Company ──────────────────────────────────────────────────────────────────
 
+def _company_row(db: Session):
+    """Return the single company row, creating it from column defaults if absent.
+
+    A fresh install has no row, and both GET and PUT used to 404 on that — which
+    left the Company tab permanently unusable on a new deployment: you could not
+    read the settings, and you could not create them either. Every column carries
+    a sensible default, so materialising the row on first access is safe and makes
+    the screen work out of the box.
+    """
+    row = db.execute(text("SELECT * FROM system_company ORDER BY id LIMIT 1")).fetchone()
+    if row is None:
+        db.execute(text("INSERT INTO system_company DEFAULT VALUES"))
+        db.commit()
+        row = db.execute(text("SELECT * FROM system_company ORDER BY id LIMIT 1")).fetchone()
+    return row
+
+
 @router.get("/company")
 async def get_company(db: Session = Depends(get_db)):
-    row = db.execute(text("SELECT * FROM system_company ORDER BY id LIMIT 1")).fetchone()
+    row = _company_row(db)
     if not row:
         raise HTTPException(404, "Company settings not found")
     return dict(row._mapping)
@@ -416,7 +433,7 @@ async def get_company(db: Session = Depends(get_db)):
 
 @router.put("/company")
 async def update_company(body: CompanyUpdate, db: Session = Depends(get_db)):
-    row = db.execute(text("SELECT id FROM system_company ORDER BY id LIMIT 1")).fetchone()
+    row = _company_row(db)
     if not row:
         raise HTTPException(404, "Company settings not found")
 

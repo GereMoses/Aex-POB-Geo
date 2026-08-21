@@ -7,7 +7,7 @@ import asyncio
 from typing import Dict, Optional
 from fastapi import Request, HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
+from starlette.responses import Response, JSONResponse
 import logging
 import redis
 from .config import settings
@@ -146,17 +146,24 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             window=window
         )
 
-        # Reject BEFORE the handler runs so no DB/CPU work is done for limited requests
+        # Reject BEFORE the handler runs so no DB/CPU work is done for limited requests.
+        #
+        # Return a JSONResponse rather than raising HTTPException: this is
+        # BaseHTTPMiddleware, which sits OUTSIDE FastAPI's exception handlers, so a
+        # raised HTTPException escapes as an unhandled error and the caller gets a
+        # generic 500 "An unexpected error occurred" instead of 429. That turns a
+        # few mistyped passwords into what looks like a server fault, and hides the
+        # Retry-After the client needs.
         if not allowed:
-            logger.warning(f"Rate limit exceeded for {client_id}")
-            raise HTTPException(
+            logger.warning(f"Rate limit exceeded for {client_id} on {scope}")
+            return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail={
+                content={
                     "error": "Rate limit exceeded",
                     "message": f"Too many requests. Try again in {info['retry_after']} seconds.",
                     "retry_after": info["retry_after"],
                     "limit": info["limit"],
-                    "period": self.period
+                    "period": window,
                 },
                 headers={
                     "X-RateLimit-Limit": str(info["limit"]),

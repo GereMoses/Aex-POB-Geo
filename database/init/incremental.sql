@@ -142,3 +142,65 @@ ALTER TABLE public.mustering_event ADD COLUMN IF NOT EXISTS muster_zone_ids json
 -- mustering_log.last_punch_area holds a zone NAME (zones.name is varchar(100));
 -- the original varchar(20) truncated longer names and broke safe-count attribution.
 ALTER TABLE public.mustering_log ALTER COLUMN last_punch_area TYPE varchar(100);
+
+-- ── Identity: keep `users` in step with `auth_user` ───────────────────────────
+-- This schema carries TWO user tables. Accounts are created and authenticated in
+-- `auth_user` (login, seed_initial.py), but 55 foreign keys across the schema —
+-- department_personnel.approved_by, onboarding.*, certification_audits, device
+-- events, payroll audit and more — reference `users(id)`, which starts EMPTY.
+--
+-- The result on a fresh deployment: every "who did this" stamp fails with a
+-- foreign-key violation. Assigning an employee to a department, for example,
+-- returns 404 "Referenced record does not exist" for every user, forever.
+--
+-- `users` is only ever read as a FALLBACK identity lookup (core/dependencies.py)
+-- and never for credential verification, so the mirror deliberately does NOT copy
+-- the password hash — '!' is an unusable value (the Django convention), keeping
+-- credentials in exactly one place. Ids are shared so the FKs resolve.
+INSERT INTO public.users (id, username, email, full_name, hashed_password,
+                          is_active, is_superuser, is_verified, last_login,
+                          created_at, updated_at, is_global_admin)
+SELECT a.id, a.username, COALESCE(a.email, a.username || '@local'),
+       NULLIF(TRIM(COALESCE(a.first_name,'') || ' ' || COALESCE(a.last_name,'')), ''),
+       '!', COALESCE(a.is_active, TRUE), COALESCE(a.is_superuser, FALSE), TRUE,
+       a.last_login, a.created_at, a.updated_at, COALESCE(a.is_global_admin, FALSE)
+FROM public.auth_user a
+ON CONFLICT (id) DO UPDATE SET
+    username        = EXCLUDED.username,
+    email           = EXCLUDED.email,
+    full_name       = EXCLUDED.full_name,
+    is_active       = EXCLUDED.is_active,
+    is_superuser    = EXCLUDED.is_superuser,
+    is_global_admin = EXCLUDED.is_global_admin,
+    updated_at      = NOW();
+
+-- Keep the sequence ahead of the mirrored ids so a later INSERT into users
+-- cannot collide with an auth_user id.
+SELECT setval('users_id_seq',
+              GREATEST((SELECT COALESCE(MAX(id), 0) FROM public.users), 1), TRUE);
+
+CREATE OR REPLACE FUNCTION public.sync_auth_user_to_users() RETURNS trigger AS $$
+BEGIN
+    INSERT INTO public.users (id, username, email, full_name, hashed_password,
+                              is_active, is_superuser, is_verified, last_login,
+                              created_at, updated_at, is_global_admin)
+    VALUES (NEW.id, NEW.username, COALESCE(NEW.email, NEW.username || '@local'),
+            NULLIF(TRIM(COALESCE(NEW.first_name,'') || ' ' || COALESCE(NEW.last_name,'')), ''),
+            '!', COALESCE(NEW.is_active, TRUE), COALESCE(NEW.is_superuser, FALSE), TRUE,
+            NEW.last_login, NEW.created_at, NEW.updated_at, COALESCE(NEW.is_global_admin, FALSE))
+    ON CONFLICT (id) DO UPDATE SET
+        username        = EXCLUDED.username,
+        email           = EXCLUDED.email,
+        full_name       = EXCLUDED.full_name,
+        is_active       = EXCLUDED.is_active,
+        is_superuser    = EXCLUDED.is_superuser,
+        is_global_admin = EXCLUDED.is_global_admin,
+        updated_at      = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_auth_user ON public.auth_user;
+CREATE TRIGGER trg_sync_auth_user
+    AFTER INSERT OR UPDATE ON public.auth_user
+    FOR EACH ROW EXECUTE FUNCTION public.sync_auth_user_to_users();
