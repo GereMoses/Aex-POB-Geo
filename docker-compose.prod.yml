@@ -257,6 +257,52 @@ services:
       - pob_external
     restart: unless-stopped
 
+  # ── WhatsApp gateway (OPT-IN) ───────────────────────────────────────────────
+  # Self-hosted Evolution API, linked to a WhatsApp account by QR. Runs ONLY with
+  # an explicit profile so it never starts as part of a normal deploy:
+  #
+  #     docker compose --env-file .env.prod -f docker-compose.prod.yml \
+  #         --profile whatsapp up -d whatsapp-gateway
+  #
+  # READ THIS FIRST. This drives an UNOFFICIAL WhatsApp client, which breaches
+  # Meta's terms. Numbers used this way are widely reported banned within 2-8
+  # weeks, and a single alert fanned out to the whole muster list is exactly the
+  # pattern Meta's automated detection looks for. Keep email and SMS enabled
+  # alongside it — WhatsApp must never be the only route for an emergency.
+  whatsapp-gateway:
+    image: evoapicloud/evolution-api:latest
+    container_name: pob_whatsapp_gateway
+    profiles: ["whatsapp"]
+    environment:
+      - AUTHENTICATION_API_KEY=${WHATSAPP_API_KEY:-change-me}
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      # Its own schema on the existing Postgres — no second database to run.
+      - DATABASE_CONNECTION_URI=postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME}?schema=evolution
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://redis:6379/6
+      - CACHE_REDIS_PREFIX_KEY=evolution
+      - CONFIG_SESSION_PHONE_CLIENT=ApexPOB
+      - CONFIG_SESSION_PHONE_NAME=Chrome
+      - LOG_LEVEL=ERROR
+      - DEL_INSTANCE=false
+    volumes:
+      - whatsapp_instances:/evolution/instances
+    ports:
+      # Bound to localhost: the QR-pairing UI must NOT be exposed publicly.
+      # Reach it over an SSH tunnel to pair the phone.
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - pob_internal
+      - pob_external
+    restart: unless-stopped
+
   # ── Automated Database Backup ───────────────────────────────────────────────
   # Runs pg_dump daily at 02:00. Keeps 7 daily + 4 weekly + 3 monthly backups.
   #
@@ -395,6 +441,8 @@ services:
 
 # ── Named Volumes ─────────────────────────────────────────────────────────────
 volumes:
+  whatsapp_instances:
+    driver: local
   postgres_data:
     driver: local
   redis_data:

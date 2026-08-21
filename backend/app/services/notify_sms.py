@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time as _time
 import re
 from typing import Dict, Iterable, List, Union
 
@@ -226,10 +227,20 @@ def _send_generic(recipients: List[str], message: str) -> Dict[str, object]:
             body[f_from] = sender_id
         return body
 
+    # A self-hosted gateway runs on a phone and WILL sometimes be slow or
+    # offline. Notifications dispatch synchronously while a muster is being
+    # activated, so an unbounded per-recipient loop could leave the operator
+    # watching a spinner for minutes during an emergency. Bound the single
+    # request AND the whole run; anything not attempted is reported failed
+    # rather than silently dropped.
+    req_timeout = float(os.getenv("SMS_TIMEOUT", "8"))
+    budget = float(os.getenv("SMS_TOTAL_TIMEOUT", "30"))
+    started = _time.monotonic()
+
     sent, failed = 0, []
     if batch:
         try:
-            resp = requests.post(url, json=_body(recipients), headers=headers, timeout=10)
+            resp = requests.post(url, json=_body(recipients), headers=headers, timeout=req_timeout)
             resp.raise_for_status()
             sent = len(recipients)
         except Exception as exc:  # noqa: BLE001
@@ -238,8 +249,12 @@ def _send_generic(recipients: List[str], message: str) -> Dict[str, object]:
         return _finish(sent, failed, "generic")
 
     for number in recipients:
+        if _time.monotonic() - started > budget:
+            failed.append(number)
+            logger.warning("SMS time budget of %.0fs exhausted — %s not attempted", budget, number)
+            continue
         try:
-            resp = requests.post(url, json=_body(number), headers=headers, timeout=10)
+            resp = requests.post(url, json=_body(number), headers=headers, timeout=req_timeout)
             resp.raise_for_status()
             sent += 1
         except Exception as exc:  # noqa: BLE001

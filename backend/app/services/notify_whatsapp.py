@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time as _time
 from typing import Dict, Iterable, List, Union
 
 from .notify_sms import normalize_msisdn, TERMII_DEFAULT_BASE
@@ -179,14 +180,28 @@ def _send_generic(recipients: List[str], message: str) -> Dict[str, object]:
     except Exception:
         logger.warning("WHATSAPP_EXTRA_BODY is not valid JSON — ignoring it")
 
+    # A self-hosted gateway runs on a phone and WILL sometimes be slow or
+    # offline. Notifications dispatch synchronously while a muster is being
+    # activated, so an unbounded per-recipient loop could leave the operator
+    # watching a spinner for minutes during an emergency. Bound the single
+    # request AND the whole run; anything not attempted is reported failed
+    # rather than silently dropped.
+    req_timeout = float(os.getenv("WHATSAPP_TIMEOUT", "8"))
+    budget = float(os.getenv("WHATSAPP_TOTAL_TIMEOUT", "30"))
+    started = _time.monotonic()
+
     sent, failed = 0, []
     for number in recipients:
+        if _time.monotonic() - started > budget:
+            failed.append(number)
+            logger.warning("WHATSAPP time budget of %.0fs exhausted — %s not attempted", budget, number)
+            continue
         try:
             body: Dict[str, object] = {f_to: number, f_msg: message}
             if api_key and not key_header:
                 body["api_key"] = api_key
             body.update(extra)
-            resp = requests.post(url, json=body, headers=headers, timeout=10)
+            resp = requests.post(url, json=body, headers=headers, timeout=req_timeout)
             resp.raise_for_status()
             sent += 1
         except Exception as exc:  # noqa: BLE001
