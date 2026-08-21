@@ -41,10 +41,14 @@ def _require_admin(current_user=Depends(get_current_user)):
 
 class ConfigIn(BaseModel):
     api_base_url:        str
+    # SeamlessHR authenticates with a PAIR of static header credentials:
+    #   x-client-secret ← api_key (encrypted at rest)
+    #   x-client-id     ← client_id (not secret, stored in options)
     api_key:             Optional[str] = None   # None / empty = keep existing (sent when key field is masked)
+    client_id:           Optional[str] = None
     org_id:              Optional[str] = None
     auth_header_name:    Optional[str] = "Authorization"
-    attendance_endpoint: Optional[str] = "/v1/attendance/clock-records"
+    attendance_endpoint: Optional[str] = "/biometric/process"
     employee_endpoint:   Optional[str] = "/v1/employees"
     is_enabled:          Optional[bool] = False
     sync_time:           Optional[str] = "00:00"
@@ -80,11 +84,14 @@ async def get_integration_config(
     if not row:
         return {
             "configured": False,
-            "api_base_url": "https://api.seamlesshr.com",
+            # SeamlessHR's published coordinates. Swap the sandbox host for the
+            # live one once they issue production credentials.
+            "api_base_url": "https://api-sandbox.seamlesshr.app",
             "api_key": "",
+            "client_id": "",
             "org_id": "",
             "auth_header_name": "Authorization",
-            "attendance_endpoint": "/v1/attendance/clock-records",
+            "attendance_endpoint": "/biometric/process",
             "employee_endpoint": "/v1/employees",
             "is_enabled": False,
             "sync_time": "00:00",
@@ -92,13 +99,22 @@ async def get_integration_config(
         }
 
     # Mask the API key — only show last 6 chars
-    key = row[1] or ""
-    masked = ("*" * max(0, len(key) - 6)) + key[-6:] if len(key) > 6 else "***"
+    # Mask the PLAINTEXT secret, not the stored ciphertext — otherwise the admin
+    # sees the tail of an encrypted blob and cannot recognise their own credential.
+    from ..core.crypto import decrypt_secret
+    try:
+        key = decrypt_secret(row[1]) or ""
+    except Exception:
+        key = ""
+    masked = ("•" * max(0, len(key) - 4)) + key[-4:] if len(key) > 4 else "••••"
+    _opts = _merge_options(row[8] if len(row) > 8 else None)
 
     return {
         "configured":            bool(row[0] and row[1]),
         "api_base_url":          row[0],
         "api_key_masked":        masked,
+        # Not a secret — shown in full so the admin can confirm the pairing.
+        "client_id":             _opts.get("client_id", ""),
         "org_id":                row[2],
         "auth_header_name":      row[3],
         "attendance_endpoint":   row[4],
@@ -149,10 +165,18 @@ async def save_integration_config(
     # Preserve existing options if the caller didn't send any (partial saves).
     import json as _json
     if body.options is not None:
-        options_json = _json.dumps(body.options)
+        merged_options = dict(body.options)
     else:
         prev = db.execute(text("SELECT options FROM hr_integration_config LIMIT 1")).fetchone()
-        options_json = _json.dumps(prev[0]) if (prev and prev[0]) else None
+        merged_options = dict(prev[0]) if (prev and prev[0]) else {}
+
+    # client_id is a first-class form field but lives inside options, so the
+    # connector stays generic. Blank means "leave whatever is already stored"
+    # — same keep-existing rule the API key uses.
+    if body.client_id is not None and body.client_id.strip():
+        merged_options["client_id"] = body.client_id.strip()
+
+    options_json = _json.dumps(merged_options) if merged_options else None
 
     db.execute(text("DELETE FROM hr_integration_config"))
     db.execute(text("""
@@ -167,7 +191,7 @@ async def save_integration_config(
         "api_key":   api_key,
         "org_id":    body.org_id,
         "auth_name": body.auth_header_name or "Authorization",
-        "att_ep":    body.attendance_endpoint or "/v1/attendance/clock-records",
+        "att_ep":    body.attendance_endpoint or "/biometric/process",
         "emp_ep":    body.employee_endpoint or "/v1/employees",
         "enabled":   body.is_enabled,
         "sync_time": body.sync_time or "00:00",

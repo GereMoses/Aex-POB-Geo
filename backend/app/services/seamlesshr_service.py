@@ -9,9 +9,9 @@ the hr_integration_config table so they can be updated without a code deploy
 once SeamlessHR shares their API documentation.
 
 Default assumptions (common REST HR API pattern — update via Settings UI):
-  Base URL:             https://api.seamlesshr.com
+  Base URL:             https://api-sandbox.seamlesshr.app  (sandbox; swap for live)
   Auth header:          Authorization: Bearer <api_key>
-  Attendance endpoint:  POST /v1/attendance/clock-records   (batch)
+  Attendance endpoint:  POST /biometric/process   (bare array, max 100/call)
   Employee check:       GET  /v1/employees/{emp_id}
 
 Attendance payload sent per employee per day:
@@ -60,12 +60,46 @@ logger = logging.getLogger(__name__)
 # Defaults reproduce the original behaviour exactly, so an unconfigured `options`
 # column changes nothing. Any HR API's quirks are absorbed here.
 _DEFAULT_OPTIONS: Dict[str, Any] = {
-    "auth_type":          "bearer",              # bearer | api_key | basic | oauth2
-    "org_header_name":    "X-Organization-ID",
-    "payload_wrapper_key": "records",            # "" ⇒ send a bare JSON array
-    "batch_size":         50,
+    # Defaults below are SeamlessHR's PUBLISHED contract (docs.seamlesshr.com):
+    #   auth      : x-client-id + x-client-secret headers (no bearer, no OAuth)
+    #   push      : POST /biometric/process, a BARE JSON array, max 100 per call
+    #   payload   : one record PER PUNCH — {attendanceId, dateTime, type, deviceSN}
+    # Every value stays overridable per-tenant from the UI.
+    "auth_type":          "dual_header",         # bearer | api_key | basic | oauth2 | dual_header
+    "org_header_name":    "",                    # SeamlessHR scopes by client id, not a header
+    "payload_wrapper_key": "",                   # "" ⇒ send a bare JSON array
+    "batch_size":         100,                   # SeamlessHR hard limit
     "http_method":        "POST",
-    "employee_id_source": "emp_code",            # emp_code | badge_id | biotime_employee_id
+    # "punch_events" expands each computed day into CLOCK_IN/CLOCK_OUT events
+    # (SeamlessHR). "daily_summary" keeps the flat one-row-per-day shape for any
+    # HR system that accepts computed totals.
+    "payload_style":      "punch_events",        # punch_events | daily_summary
+    "clock_in_type":      "CLOCK_IN",
+    "clock_out_type":     "CLOCK_OUT",
+    # How the timestamp is rendered — see _render_dt.
+    #
+    # local_naive is the default because SeamlessHR's biometric ingestion is built
+    # around ZKTeco ADMS, and the ADMS protocol carries NO timezone: a reader sends
+    # its own wall clock as "YYYY-MM-DD HH:MM:SS" and the receiving server decides
+    # what it means. In a normal SeamlessHR deployment the customer's readers are
+    # set to local time, so what SeamlessHR stores — and returns from
+    # GET /v1/attendances, e.g. "2024-11-20 09:43:05" — is local wall clock.
+    #
+    # ApexPOB sets its readers to UTC (adms_protocol pushes datetime.now() from a
+    # UTC container), so a 07:15 Lagos punch is held as 06:15Z. Sending that raw
+    # would show up in SeamlessHR as 06:15 — an hour early, every punch. Rendering
+    # site-local reproduces exactly what a directly-connected reader would have
+    # sent. Switch to offset/utc_naive if SeamlessHR confirm they parse offsets.
+    "datetime_style":     "local_naive",      # offset | local_naive | utc_naive
+    "time_zone":          "Africa/Lagos",     # site wall clock for local_naive
+    "default_device_sn":  "POB-MANUAL",          # when no reader backs the punch
+    # attendanceId = the employee's Personnel ID ON THE BIOMETRIC DEVICE, per
+    # SeamlessHR support docs. That is the only employee mapping in the payload.
+    "attendance_id_source": "device_personnel_id",  # device_personnel_id | idempotency_key
+    "include_employee_id":  False,               # extra key; their 406 covers unknown fields
+    # ApexPOB writes badge_id to the ZKTeco reader as the user_id, so badge_id is
+    # the Personnel ID SeamlessHR will have against the employee.
+    "employee_id_source": "badge_id",            # emp_code | badge_id | biotime_employee_id
     "time_format":        "iso",                 # iso | hms (HH:MM:SS)
     "field_map":          {},                    # canonical → output key ("" ⇒ omit field)
     "extra_headers":      {},                    # arbitrary static headers
@@ -83,14 +117,18 @@ _DEFAULT_OPTIONS: Dict[str, Any] = {
     "employee_limit_param": "limit",             # SeamlessHR default page size is only 10
     "employee_limit":       100,
     "employee_status_field": "status",           # 'active'|'inactive' → drives is_active
+    # Field names below are SeamlessHR's DOCUMENTED GET /v1/employees response.
+    # NOTE: SeamlessHR returns `staff_name` + `staff_other_names` rather than a
+    # split first/last — confirm with them which carries the surname for this
+    # tenant, then adjust here if their convention is the reverse.
     "employee_field_map": {                      # SeamlessHR field → ApexPOB personnel field
-        "emp_code":        "employee_code",
-        "first_name":      "firstname",
-        "last_name":       "lastname",
-        "email":           "email",
-        "phone":           "phone",
+        "emp_code":        "staff_id",
+        "first_name":      "staff_other_names",
+        "last_name":       "staff_name",
+        "email":           "staff_email",
+        "phone":           "staff_phone",
         "department":      "department",
-        "position":        "job_role",
+        "position":        "job_title",
         "employment_type": "contract_type",
         "hire_date":       "employment_date",
     },
@@ -126,7 +164,19 @@ _oauth_cache: Dict[str, Any] = {"token": None, "exp": 0.0}
 def _merge_options(raw: Optional[Dict]) -> Dict[str, Any]:
     opts = dict(_DEFAULT_OPTIONS)
     if isinstance(raw, dict):
-        opts.update({k: v for k, v in raw.items() if v is not None})
+        for k, v in raw.items():
+            if v is None:
+                continue
+            # The *_map options are dictionaries of field names. Merge them key by
+            # key instead of replacing wholesale: an admin correcting one mapping
+            # (say the surname field) must not silently drop every other field
+            # from the sync. Pass an explicit "" to disable an individual entry.
+            if isinstance(v, dict) and isinstance(_DEFAULT_OPTIONS.get(k), dict):
+                merged = dict(_DEFAULT_OPTIONS[k])
+                merged.update(v)
+                opts[k] = merged
+            else:
+                opts[k] = v
     return opts
 
 
@@ -148,7 +198,7 @@ def get_config(db: Session) -> Optional[Dict[str, Any]]:
             "api_key":             decrypt_secret(row[1]),  # transparently handles legacy plaintext
             "org_id":              row[2],
             "auth_header_name":    row[3] or "Authorization",
-            "attendance_endpoint": row[4] or "/v1/attendance/clock-records",
+            "attendance_endpoint": row[4] or "/biometric/process",
             "employee_endpoint":   row[5] or "/v1/employees",
             "is_enabled":          bool(row[6]),
             "sync_time":           row[7] or "00:00",  # Bug 2 fix: was missing
@@ -261,8 +311,106 @@ def _build_attendance_records(db: Session, sync_date: date) -> List[Dict]:
             "overtime_minutes": c["overtime_minutes"],
             "source":           "POB_BIOMETRIC",
             "idempotency_key":  c["idempotency_key"],
+            "check_in_device_sn":  c.get("check_in_device_sn"),
+            "check_out_device_sn": c.get("check_out_device_sn"),
         })
     return records
+
+
+def _to_punch_events(r: Dict, opts: Dict, emp_map: Dict[str, str]) -> List[Dict]:
+    """Expand ONE computed employee-day into the per-punch events SeamlessHR wants.
+
+    SeamlessHR's /biometric/process takes individual events
+    ({attendanceId, dateTime, type, deviceSN}), not daily totals — so the flat
+    canonical record cannot be sent as-is, and `field_map` (which only renames
+    keys) cannot bridge the difference.
+
+    What preserves the "ApexPOB calculates, SeamlessHR consumes" contract is
+    WHICH punches get sent: these are the shift-resolved boundaries from
+    att_report — access-control door swipes already excluded and cross-midnight
+    shifts already attributed to the right business day — not the raw punch
+    stream. SeamlessHR therefore only ever sees the clean pair.
+
+    attendanceId is derived from the per-employee-day idempotency key plus the
+    event type, so it is stable across retries and unique per event.
+    """
+    src     = opts.get("employee_id_source", "emp_code")
+    emp_val = emp_map.get(r["employee_id"], r["employee_id"]) if (src != "emp_code" and emp_map) else r["employee_id"]
+    fm      = opts.get("field_map") or {}
+    default_sn = opts.get("default_device_sn") or "POB-MANUAL"
+    dt_style = opts.get("datetime_style", "offset")
+    tz_name  = opts.get("time_zone", "Africa/Lagos")
+
+    def _render_dt(iso: str) -> str:
+        """Render the timestamp the way SeamlessHR expects.
+
+        Their documentation is inconsistent here: the request example shows
+        "2025-07-07T13:45:30" with NO offset, while the schema default shows
+        "2025-07-16T08:44:16+00:00" with one. That difference is not cosmetic —
+        ApexPOB stores UTC, so a 07:15 Lagos punch is 06:15Z. If SeamlessHR
+        ignores the offset and reads the value as local time, every punch lands an
+        hour early, every day. Configurable until they confirm which they parse:
+
+          offset      2026-08-19T06:15:00+00:00   (UTC, explicit offset — default)
+          local_naive 2026-08-19T07:15:00         (site local time, no offset)
+          utc_naive   2026-08-19T06:15:00         (UTC, offset stripped)
+        """
+        if dt_style == "offset":
+            return iso
+        try:
+            parsed = datetime.fromisoformat(iso)
+        except ValueError:
+            return iso
+        if dt_style == "local_naive":
+            try:
+                from zoneinfo import ZoneInfo
+                parsed = parsed.astimezone(ZoneInfo(tz_name))
+            except Exception:
+                logger.warning("Unknown time_zone %r — sending UTC instead", tz_name)
+        return parsed.replace(tzinfo=None).isoformat()
+
+    def _event(dt: Optional[str], kind: str, sn: Optional[str]) -> Optional[Dict]:
+        if not dt:
+            return None
+        # attendanceId is how SeamlessHR identifies WHOSE punch this is.
+        #
+        # Their API reference calls it "Unique ID for the attendance record",
+        # which reads like a row id — but their support documentation is explicit:
+        #   "The Personnel ID is the ID assigned to employees on the Biometric
+        #    Device used within your organization. At the point of upload, the
+        #    Personnel ID on the biometric device is the attendance ID that will
+        #    be uploaded to each employee's profile."
+        # (support.seamlesshr.com — biometric machine setup / T&A FAQs)
+        #
+        # So it is the DEVICE USER ID, and it is the only employee mapping in the
+        # payload — which is why the schema has no employee field. It repeats
+        # across a day's punches; the record is identified by
+        # (attendanceId, dateTime, type). ApexPOB writes badge_id to the reader as
+        # the ZK user_id, so that is the value SeamlessHR will have on file.
+        if opts.get("attendance_id_source", "device_personnel_id") == "idempotency_key":
+            attendance_id = f"{r['idempotency_key']}-{kind}"   # legacy / other HR systems
+        else:
+            attendance_id = emp_val
+        out = {
+            "attendanceId": attendance_id,
+            "dateTime":     _render_dt(dt),
+            "type":         kind,
+            "deviceSN":     sn or default_sn,
+        }
+        # employeeId is NOT in SeamlessHR's schema, and their status-code page
+        # documents 406 for "requests that contain references to non-existent
+        # fields" — so an extra key is a real rejection risk. Now that
+        # attendanceId carries the identity it is redundant; off unless asked for.
+        if opts.get("include_employee_id"):
+            out["employeeId"] = emp_val
+        # Allow per-tenant renaming of any outbound key (e.g. employeeId → staffId).
+        return {fm.get(k, k): v for k, v in out.items() if fm.get(k, k) != ""}
+
+    events = [
+        _event(r["clock_in"],  opts.get("clock_in_type", "CLOCK_IN"),   r.get("check_in_device_sn")),
+        _event(r["clock_out"], opts.get("clock_out_type", "CLOCK_OUT"), r.get("check_out_device_sn")),
+    ]
+    return [e for e in events if e]
 
 
 async def push_attendance(
@@ -353,9 +501,33 @@ async def push_attendance(
                 if erow[1]:
                     emp_map[erow[0]] = str(erow[1])
 
-    wrapper = opts.get("payload_wrapper_key", "records")
+    wrapper = opts.get("payload_wrapper_key", "")
     method  = (opts.get("http_method") or "POST").upper()
-    batch_size = int(opts.get("batch_size") or 50)
+    batch_size = int(opts.get("batch_size") or 100)
+    style   = opts.get("payload_style", "punch_events")
+
+    # One employee-day becomes up to TWO events in punch_events mode, so the
+    # provider's batch cap counts EVENTS, not employee-days. Group per day and
+    # never split a group across batches: a day is marked synced only when its
+    # whole group lands, so a half-sent day can't be skipped on the next run.
+    groups: List[tuple] = []
+    for r in records:
+        payloads = (_to_punch_events(r, opts, emp_map) if style == "punch_events"
+                    else [_to_payload(r, opts, emp_map)])
+        if payloads:
+            groups.append((r["employee_id"], payloads))
+
+    batches: List[List[tuple]] = []
+    current: List[tuple] = []
+    current_n = 0
+    for emp, payloads in groups:
+        if current and current_n + len(payloads) > batch_size:
+            batches.append(current)
+            current, current_n = [], 0
+        current.append((emp, payloads))
+        current_n += len(payloads)
+    if current:
+        batches.append(current)
 
     failed = 0
     sent   = 0
@@ -363,23 +535,22 @@ async def push_attendance(
     try:
         client = await _get_shr_client()
         sent_codes = []
-        for i in range(0, len(records), batch_size):
-            batch = records[i : i + batch_size]
-            payload_list = [_to_payload(r, opts, emp_map) for r in batch]
+        for batch_no, batch in enumerate(batches, 1):
+            payload_list = [pl for _, payloads in batch for pl in payloads]
             body = payload_list if not wrapper else {wrapper: payload_list}
             try:
                 resp = await client.request(method, url, json=body, headers=headers)
                 if resp.status_code in (200, 201, 204):
                     sent += len(batch)
-                    sent_codes.extend(r["employee_id"] for r in batch)
+                    sent_codes.extend(emp for emp, _ in batch)
                 else:
                     logger.warning(
-                        "SeamlessHR batch %d returned %s: %s",
-                        i // batch_size + 1, resp.status_code, resp.text[:200],
+                        "SeamlessHR batch %d (%d events) returned %s: %s",
+                        batch_no, len(payload_list), resp.status_code, resp.text[:200],
                     )
                     failed += len(batch)
             except httpx.RequestError as e:
-                logger.error("SeamlessHR request error (batch %d): %s", i // batch_size + 1, e)
+                logger.error("SeamlessHR request error (batch %d): %s", batch_no, e)
                 failed += len(batch)
 
         # Record successfully-sent employee-days so a re-run cannot double-post them.
@@ -460,6 +631,36 @@ def _log_sync(db: Session, result: Dict):
 
 # ── Employee pull (SeamlessHR is the master; pulled personnel are read-only here) ──
 
+def _link_department(db: Session, person, unmatched: set) -> None:
+    """Resolve the department NAME that SeamlessHR sends into ApexPOB's
+    departments.id and store it on personnel.department_id.
+
+    Why this matters: shifts hang off departments (departments.default_shift_id),
+    and the attendance engine resolves an employee's schedule via
+    personnel.department_id — NOT the department name string. A synced employee
+    with only the name set therefore has no department as far as the calculation
+    is concerned, silently loses the department's shift, and falls through to the
+    global default. Matching is case-insensitive on name, then on code.
+
+    A department that does not exist in ApexPOB is left unlinked and reported, so
+    an admin can create it and give it a shift, rather than being invented here
+    with no shift attached (which would look correct and behave wrongly).
+    """
+    name = (getattr(person, "department", None) or "").strip()
+    if not name:
+        return
+    row = db.execute(text(
+        "SELECT id FROM departments "
+        "WHERE lower(name) = lower(:n) OR lower(code) = lower(:n) "
+        "ORDER BY id LIMIT 1"
+    ), {"n": name}).fetchone()
+    if row:
+        person.department_id = row[0]
+    else:
+        person.department_id = None
+        unmatched.add(name)
+
+
 async def pull_employees(db: Session, triggered_by: str = "manual") -> Dict[str, Any]:
     """Pull the employee master from SeamlessHR and upsert into `personnel`, marking
     each record hr_source='SEAMLESSHR' so its master fields become read-only in ApexPOB.
@@ -483,12 +684,16 @@ async def pull_employees(db: Session, triggered_by: str = "manual") -> Dict[str,
     url = cfg["api_base_url"] + cfg.get("employee_endpoint", "/v1/employees")
 
     headers = await build_auth_headers(cfg)
-    if cfg.get("org_id"):
-        headers[opts.get("org_header_name", "X-Organization-ID")] = cfg["org_id"]
+    # SeamlessHR scopes by client id, so org_header_name defaults to "". Guard on
+    # the name being non-empty or we would send a header with a blank name.
+    org_header = opts.get("org_header_name")
+    if cfg.get("org_id") and org_header:
+        headers[org_header] = cfg["org_id"]
 
     created = updated = skipped = 0
     seen = 0
     now = datetime.utcnow()
+    unmatched_departments: set = set()
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -549,6 +754,7 @@ async def pull_employees(db: Session, triggered_by: str = "manual") -> Dict[str,
                             person.is_active = False
                             person.is_onboard = False
                             person.is_pob = False
+                        _link_department(db, person, unmatched_departments)
                         person.hr_source = "SEAMLESSHR"
                         person.hr_synced_at = now
                         db.flush()
@@ -560,11 +766,26 @@ async def pull_employees(db: Session, triggered_by: str = "manual") -> Dict[str,
                         logger.warning("pull_employees: skipped %s (%s)", code, row_err)
 
                 db.commit()
-                if not page_param or len(rows) < batch:
+                # Stop on a short page. Compare against the page size we actually
+                # REQUESTED (employee_limit), not batch_size — batch_size sizes the
+                # attendance push, and if it were the larger of the two a full page
+                # would look short and the employee master would silently truncate.
+                page_size = int(limit_val or batch)
+                if not page_param or len(rows) < page_size:
                     break
                 page += 1
 
         result = {"created": created, "updated": updated, "skipped": skipped, "total": seen}
+        # Surface departments SeamlessHR sent that don't exist here. Those staff are
+        # unlinked, so they inherit no department shift — the admin needs to create
+        # the department and give it a Default Shift, then re-pull.
+        if unmatched_departments:
+            result["unmatched_departments"] = sorted(unmatched_departments)
+            logger.warning(
+                "pull_employees: no ApexPOB department matches %s — those employees "
+                "have no department shift until the department is created",
+                sorted(unmatched_departments),
+            )
         _log_sync(db, {
             "sync_date": now.date(), "triggered_by": triggered_by, "status": "success",
             "records_built": seen, "records_sent": created + updated, "records_failed": skipped,
@@ -629,6 +850,9 @@ def handle_webhook_event(db: Session, event: str, data: Dict, opts: Dict) -> str
             if val is not None and hasattr(person, pfield):
                 setattr(person, pfield, val)
         person.full_name = f"{person.first_name or ''} {person.last_name or ''}".strip()
+        # Same department linking as the full pull — a webhook update must not
+        # leave the employee unlinked from their department (and so shiftless).
+        _link_department(db, person, set())
         person.is_active = True
         person.hr_source = "SEAMLESSHR"
         person.hr_synced_at = datetime.utcnow()
@@ -663,8 +887,11 @@ async def pull_leave(db: Session, triggered_by: str = "manual") -> Dict[str, Any
     url = cfg["api_base_url"] + endpoint
 
     headers = await build_auth_headers(cfg)
-    if cfg.get("org_id"):
-        headers[opts.get("org_header_name", "X-Organization-ID")] = cfg["org_id"]
+    # SeamlessHR scopes by client id, so org_header_name defaults to "". Guard on
+    # the name being non-empty or we would send a header with a blank name.
+    org_header = opts.get("org_header_name")
+    if cfg.get("org_id") and org_header:
+        headers[org_header] = cfg["org_id"]
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
