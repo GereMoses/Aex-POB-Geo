@@ -45,6 +45,8 @@ def build_daily_attendance(db: Session, sync_date: date) -> List[Dict[str, Any]]
           "work_minutes":     int,             # shift/break-aware, computed
           "overtime_minutes": int,
           "idempotency_key":  "pob-EMP001-2026-06-06",
+          "check_in_device_sn":  str|None,  # reader SN behind the computed check-in
+          "check_out_device_sn": str|None,
         }
     """
     try:
@@ -54,9 +56,44 @@ def build_daily_attendance(db: Session, sync_date: date) -> List[Dict[str, Any]]
                    ar.check_in,
                    ar.check_out,
                    COALESCE(ar.work_minutes, 0)     AS work_minutes,
-                   COALESCE(ar.overtime_minutes, 0) AS overtime_minutes
+                   COALESCE(ar.overtime_minutes, 0) AS overtime_minutes,
+                   tin.terminal_sn                  AS check_in_device_sn,
+                   tout.terminal_sn                 AS check_out_device_sn
             FROM att_report ar
             JOIN personnel_employee pe ON pe.id = ar.emp_id
+            -- Reader that produced each computed boundary punch. SeamlessHR's
+            -- /biometric/process requires a deviceSN per event, and att_report
+            -- does not store one. A 1-minute window absorbs any rounding the
+            -- attendance calculation applies, and rides the
+            -- (emp_code, punch_time) index rather than scanning.
+            --
+            -- Restricted to ATTENDANCE-purpose readers for the same reason the
+            -- calculation is: only T&A hardware may be named in a payroll feed.
+            -- An access-control door that happens to be swiped in the same
+            -- minute must never be reported to SeamlessHR as the clocking device.
+            LEFT JOIN LATERAL (
+                SELECT t.terminal_sn
+                FROM iclock_transaction t
+                JOIN iclock_terminal tt ON tt.sn = t.terminal_sn
+                WHERE t.emp_code = pe.emp_code
+                  AND COALESCE(NULLIF(tt.reader_purpose, ''), 'ATTENDANCE') = 'ATTENDANCE'
+                  AND t.punch_time BETWEEN ar.check_in - INTERVAL '1 minute'
+                                       AND ar.check_in + INTERVAL '1 minute'
+                ORDER BY abs(EXTRACT(EPOCH FROM (t.punch_time - ar.check_in)))
+                LIMIT 1
+            ) tin ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT t.terminal_sn
+                FROM iclock_transaction t
+                JOIN iclock_terminal tt ON tt.sn = t.terminal_sn
+                WHERE t.emp_code = pe.emp_code
+                  AND ar.check_out IS NOT NULL
+                  AND COALESCE(NULLIF(tt.reader_purpose, ''), 'ATTENDANCE') = 'ATTENDANCE'
+                  AND t.punch_time BETWEEN ar.check_out - INTERVAL '1 minute'
+                                       AND ar.check_out + INTERVAL '1 minute'
+                ORDER BY abs(EXTRACT(EPOCH FROM (t.punch_time - ar.check_out)))
+                LIMIT 1
+            ) tout ON TRUE
             WHERE ar.att_date = :d
               AND ar.check_in IS NOT NULL
               AND pe.emp_code IS NOT NULL
@@ -85,6 +122,8 @@ def build_daily_attendance(db: Session, sync_date: date) -> List[Dict[str, Any]]
             "work_minutes":     int(r.work_minutes or 0),
             "overtime_minutes": int(r.overtime_minutes or 0),
             "idempotency_key":  f"pob-{r.emp_code}-{r.att_date}",
+            "check_in_device_sn":  r.check_in_device_sn,
+            "check_out_device_sn": r.check_out_device_sn,
         })
     return records
 

@@ -140,7 +140,9 @@ async def initialize_leave_balances(
     - Skips employees that already have a record for that type+year.
     - If carry_forward=True, rolls unused balance from year-1 into carry_forward_days.
     """
-    personnel_query = db.query(Personnel).filter(Personnel.status == "active")
+    # status is an UPPERCASE enum describing location (ACTIVE/ONSHORE/OFFSHORE);
+    # is_active is the employed flag. The lowercase literal matched nobody.
+    personnel_query = db.query(Personnel).filter(Personnel.is_active.is_(True))
     if body.personnel_ids:
         personnel_query = personnel_query.filter(Personnel.id.in_(body.personnel_ids))
     all_personnel = personnel_query.all()

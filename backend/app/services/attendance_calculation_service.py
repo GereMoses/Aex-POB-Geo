@@ -413,13 +413,29 @@ class AttendanceCalculationService:
         schedules = [dict(r._mapping) for r in schedules]
 
         # All punches in the date range, ordered chronologically
+        # Time & Attendance and access control are SEPARATE domains in ApexPOB.
+        # Only punches from ATTENDANCE-purpose readers may contribute to worked
+        # hours; door, zone, muster and emergency readers are access control and
+        # must never reach payroll. Without this filter an access-control exit
+        # swipe made hours after the employee left the gate is classified as the
+        # day's check-out and silently inflates the timesheet.
+        #
+        # Terminals that are unregistered or have no purpose set are treated as
+        # ATTENDANCE — that is the iclock_terminal.reader_purpose column default,
+        # so an existing deployment cannot suddenly compute zero hours.
         punch_rows = db.execute(text("""
-            SELECT punch_time, punch_state
-            FROM iclock_transaction
-            WHERE emp_code = :emp_code
-              AND punch_time::date BETWEEN :start_date AND :end_date
-            ORDER BY punch_time
-        """), {"emp_code": emp_code, "start_date": start_dt, "end_date": end_dt}).fetchall()
+            SELECT t.punch_time, t.punch_state
+            FROM iclock_transaction t
+            LEFT JOIN iclock_terminal term ON term.sn = t.terminal_sn
+            WHERE t.emp_code = :emp_code
+              AND t.punch_time::date BETWEEN :start_date AND :end_date
+              AND COALESCE(NULLIF(term.reader_purpose, ''), 'ATTENDANCE') = 'ATTENDANCE'
+            ORDER BY t.punch_time
+        """), {"emp_code": emp_code, "start_date": start_dt,
+               # +1 day: an overnight shift starting on end_dt clocks out the
+               # following morning, so that punch must be in the fetch window or
+               # the last night of the range computes as zero hours.
+               "end_date": end_dt + timedelta(days=1)}).fetchall()
 
         punches_by_date: Dict[date, list] = {}
         for p in punch_rows:
@@ -457,6 +473,12 @@ class AttendanceCalculationService:
         # ── Fallback schedule: dept default → global default ─────────────────
         fallback_sched = _fetch_default_schedule(db, dept_id, global_shift_id)
 
+        # Punches already claimed as the clock-out of a preceding overnight shift.
+        # Without this a night worker's 07:00 exit would be counted twice: once
+        # closing the night that started the evening before, and again as a stray
+        # punch on its own calendar date.
+        consumed_overnight: set = set()
+
         cur = start_dt
         while cur <= end_dt:
             sched = _schedule_for_day(schedules, cur) or fallback_sched
@@ -489,7 +511,8 @@ class AttendanceCalculationService:
             # ── BioTime-style detection windows ──────────────────────────────
             s_mins = _t2m(start_t)
             e_mins = _t2m(end_t)
-            if e_mins <= s_mins:                     # overnight shift
+            is_overnight = e_mins <= s_mins
+            if is_overnight:                         # overnight shift
                 e_mins += 1440
 
             ci_begin = _m2t((s_mins - ci_before) % 1440)
@@ -497,7 +520,21 @@ class AttendanceCalculationService:
             co_begin = _m2t((e_mins - co_before) % 1440)
             co_end   = _m2t((e_mins + co_after)  % 1440)
 
-            day_punches = punches_by_date.get(cur, [])
+            # Punches are bucketed by calendar date, but an overnight shift ends
+            # on the FOLLOWING date. Pull the next morning's punches (up to the
+            # close of this shift's check-out window) into this business day, or
+            # the evening IN and morning OUT never pair and the night is scored
+            # as zero hours worked. Anything pulled in is marked consumed so the
+            # next iteration does not count it a second time.
+            day_punches = [p for p in punches_by_date.get(cur, [])
+                           if p.punch_time not in consumed_overnight]
+            if is_overnight:
+                for p in punches_by_date.get(cur + timedelta(days=1), []):
+                    pt = _naive(p.punch_time)
+                    if pt and pt.time() <= co_end:
+                        day_punches.append(p)
+                        consumed_overnight.add(p.punch_time)
+                day_punches.sort(key=lambda p: p.punch_time)
 
             # ── Classify and pair punches ─────────────────────────────────────
             classified = _classify_punches(

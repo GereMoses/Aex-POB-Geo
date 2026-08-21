@@ -222,7 +222,9 @@ async def get_compliance_gaps(
         return []
 
     # Get all active personnel
-    pers_q = db.query(Personnel).filter(Personnel.status == "active")
+    # status is an UPPERCASE enum describing location (ACTIVE/ONSHORE/OFFSHORE);
+    # is_active is the employed flag. The lowercase literal matched nobody.
+    pers_q = db.query(Personnel).filter(Personnel.is_active.is_(True))
     if personnel_type:
         pers_q = pers_q.filter(Personnel.personnel_type == personnel_type)
     active_personnel = pers_q.all()

@@ -1033,7 +1033,9 @@ async def search_personnel(
             (Personnel.first_name + " " + Personnel.last_name).ilike(term)
             | Personnel.emp_code.ilike(term)
         )
-        .filter(Personnel.status == "active")
+        # status is an UPPERCASE enum describing location (ACTIVE/ONSHORE/OFFSHORE);
+        # is_active is the employed flag. The lowercase literal matched nobody.
+        .filter(Personnel.is_active.is_(True))
         .limit(20)
         .all()
     )

@@ -463,7 +463,8 @@ class DepartmentService:
                 Personnel, Department.id == Personnel.department_id
             ).filter(
                 Department.is_active == True,
-                Personnel.status == "active"
+                # status is a location enum (UPPERCASE); is_active is the employed flag.
+                Personnel.is_active.is_(True)
             ).group_by(Department.id).all()
             
             # Budget information (placeholder)
@@ -534,7 +535,8 @@ class DepartmentService:
             
             # Get department personnel
             personnel = db.query(Personnel).filter(
-                Personnel.status == "active"
+                # status is a location enum (UPPERCASE); is_active is the employed flag.
+                Personnel.is_active.is_(True)
             ).all()
             
             # Get department assignments

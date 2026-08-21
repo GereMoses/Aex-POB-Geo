@@ -426,7 +426,15 @@ class ZKTecoDirectService:
 
         from ...models.personnel import Personnel
 
-        query = db.query(Personnel).filter(Personnel.status == "active")
+        # Filter on is_active, the boolean "is this person employed" flag.
+        #
+        # This previously compared `status == "active"` — but status is an enum of
+        # ACTIVE / ONSHORE / OFFSHORE / IN_TRANSIT etc., stored UPPERCASE, and it
+        # describes WHERE someone is, not whether they are employed. The lowercase
+        # literal matched nothing, so a sync pushed zero users to the reader and
+        # still reported success ("No active personnel to sync") — the device
+        # silently ended up with nobody on it.
+        query = db.query(Personnel).filter(Personnel.is_active.is_(True))
         if personnel_ids:
             query = query.filter(Personnel.id.in_(personnel_ids))
         people = query.all()
