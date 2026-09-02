@@ -104,6 +104,8 @@ services:
       - /app/.pytest_cache  # Exclude pytest cache
       # Persistent upload/media dirs so file uploads survive container restarts in dev
       - uploads_dev:/app/uploads
+      # Punch selfies live outside the publicly-served upload/media volumes
+      - punch_selfies_dev:/app/private
       - media_dev:/app/media
       - logs_dev:/app/logs
     environment:
@@ -294,6 +296,8 @@ volumes:
   redis_data:
     driver: local
   uploads_dev:
+    driver: local
+  punch_selfies_dev:
     driver: local
   media_dev:
     driver: local

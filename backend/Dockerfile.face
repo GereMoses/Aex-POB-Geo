@@ -1,0 +1,22 @@
+# Apex POB with optional face verification.
+#
+# Kept separate from the base image because the runtime and models add roughly
+# 300MB, which a deployment happy with supervisor review should not have to
+# carry. Build this one only if automated face matching is wanted.
+FROM pob_backend:latest
+
+COPY requirements-face.txt /tmp/requirements-face.txt
+
+# insightface depends on opencv-python, which needs GUI libraries absent from a
+# slim image. Both variants share the same cv2 module, so uninstalling one
+# removes it for the other — they must both be removed before the headless
+# build is reinstalled, or cv2 disappears entirely.
+RUN pip install --no-cache-dir -r /tmp/requirements-face.txt \
+ && pip uninstall -y opencv-python opencv-python-headless \
+ && pip install --no-cache-dir opencv-python-headless \
+ && rm -f /tmp/requirements-face.txt \
+ && python -c "import pandas, numpy, insightface, cv2, onnxruntime; print('face stack OK', numpy.__version__, pandas.__version__)"
+
+# Models download to /root/.insightface on first use. Mount a pre-seeded volume
+# there for an air-gapped deployment, or to avoid the first-run delay.
+ENV INSIGHTFACE_HOME=/root/.insightface

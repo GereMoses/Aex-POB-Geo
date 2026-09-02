@@ -29,8 +29,6 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import apiService from '../../services/api';
 import DocumentManager from '../../components/DocumentManager/DocumentManager';
-import PersonnelBiometricPanel from './components/PersonnelBiometricPanel';
-import PersonnelMTDPanel from './components/PersonnelMTDPanel';
 
 dayjs.extend(relativeTime);
 
@@ -319,7 +317,7 @@ const PersonnelDetail = () => {
 
   const zoneList  = Array.isArray(zonesData) ? zonesData : (zonesData?.results || []);
   const deptList  = Array.isArray(deptsData) ? deptsData : (deptsData?.results || []);
-  const zoneMap   = new Map(zoneList.map(z => [z.id, z.name || z.zone_name || `Zone ${z.id}`]));
+  const zoneMap   = new Map(zoneList.map(z => [z.id, z.name || z.zone_name || `Warehouse ${z.id}`]));
 
   const checkInMutation = useMutation({
     mutationFn: () => apiService.post(`/api/v1/personnel/${id}/check-in`, {}),
@@ -427,7 +425,7 @@ const PersonnelDetail = () => {
             <Descriptions.Item label="Department">{p.department || <Text type="secondary">—</Text>}</Descriptions.Item>
             <Descriptions.Item label="Role">{p.role || <Text type="secondary">—</Text>}</Descriptions.Item>
             <Descriptions.Item label="Position">{p.position || <Text type="secondary">—</Text>}</Descriptions.Item>
-            <Descriptions.Item label="Current Zone">{p.current_zone_id ? (zoneMap.get(p.current_zone_id) || `Zone #${p.current_zone_id}`) : <Text type="secondary">—</Text>}</Descriptions.Item>
+            <Descriptions.Item label="Current Warehouse">{p.current_zone_id ? (zoneMap.get(p.current_zone_id) || `Warehouse #${p.current_zone_id}`) : <Text type="secondary">—</Text>}</Descriptions.Item>
           </Descriptions>
 
           <Divider orientation="left" style={{ fontSize: 12, margin: '16px 0 12px' }}><GlobalOutlined /> Contact</Divider>
@@ -495,16 +493,6 @@ const PersonnelDetail = () => {
       key: 'status_history',
       label: <><HistoryOutlined /> Status Log</>,
       children: <StatusHistorySection id={id} />,
-    },
-    {
-      key: 'mtd',
-      label: <><WarningOutlined /> MTD</>,
-      children: <PersonnelMTDPanel empId={Number(id)} />,
-    },
-    {
-      key: 'biometrics',
-      label: <><ScanOutlined /> Biometrics</>,
-      children: <PersonnelBiometricPanel empCode={p.emp_code} personnelId={Number(id)} />,
     },
     {
       key: 'documents',
@@ -609,7 +597,7 @@ const PersonnelDetail = () => {
               { label: 'Compliance', value: `${p.compliance_score ?? 0}%`, color: p.compliance_score >= 90 ? '#22c55e' : p.compliance_score >= 70 ? '#f59e0b' : '#ef4444' },
               { label: 'Blood', value: p.blood_group || '—', color: '#f87171' },
               { label: 'Last Seen', value: p.last_seen ? dayjs(p.last_seen).fromNow() : '—', color: '#94a3b8' },
-              { label: 'Zone', value: p.current_zone_id ? (zoneMap.get(p.current_zone_id) || `#${p.current_zone_id}`) : '—', color: '#7dd3fc' },
+              { label: 'Warehouse', value: p.current_zone_id ? (zoneMap.get(p.current_zone_id) || `#${p.current_zone_id}`) : '—', color: '#7dd3fc' },
             ].map(({ label, value, color }) => (
               <div key={label} style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.06em' }}>{label}</div>
@@ -662,11 +650,11 @@ const PersonnelDetail = () => {
             <Col span={8}><Form.Item name="employment_type" label="Employment Type"><Select><Option value="EMPLOYEE">Employee</Option><Option value="CONTRACTOR">Contractor</Option><Option value="SUBCONTRACTOR">Subcontractor</Option></Select></Form.Item></Col>
           </Row>
 
-          <Divider orientation="left" style={{ fontSize: 12 }}>Status & Zone</Divider>
+          <Divider orientation="left" style={{ fontSize: 12 }}>Status & Warehouse</Divider>
           <Row gutter={12}>
             <Col span={6}><Form.Item name="personnel_type" label="Personnel Type"><Select><Option value="STAFF">Staff</Option><Option value="CONTRACTOR">Contractor</Option><Option value="VISITOR">Visitor</Option></Select></Form.Item></Col>
             <Col span={6}><Form.Item name="status" label="Status"><Select>{STATUS_OPTIONS.map(s => <Option key={s} value={s}>{s.replace('_', ' ')}</Option>)}</Select></Form.Item></Col>
-            <Col span={8}><Form.Item name="zone_id" label="Zone"><Select allowClear showSearch optionFilterProp="children">{zoneList.map(z => <Option key={z.id} value={z.id}>{z.name}</Option>)}</Select></Form.Item></Col>
+            <Col span={8}><Form.Item name="zone_id" label="Warehouse"><Select allowClear showSearch optionFilterProp="children">{zoneList.map(z => <Option key={z.id} value={z.id}>{z.name}</Option>)}</Select></Form.Item></Col>
             <Col span={4}><Form.Item name="safety_critical" label="Safety Critical" valuePropName="checked"><input type="checkbox" /></Form.Item></Col>
           </Row>
 

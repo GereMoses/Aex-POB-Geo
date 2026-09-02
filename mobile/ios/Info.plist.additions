@@ -1,0 +1,20 @@
+<!--
+  Merge into ios/ApexPOBClock/Info.plist.
+
+  The usage strings are what the employee reads in the permission prompt, so
+  they say plainly what is collected and when. Vague wording here is both an
+  App Review risk and the reason staff refuse the permission.
+-->
+<key>NSLocationWhenInUseUsageDescription</key>
+<string>Apex Clock checks that you are at your warehouse when you clock in or out. Your location is only read at that moment, never in the background.</string>
+
+<key>NSCameraUsageDescription</key>
+<string>Apex Clock takes a photo when you clock in so your supervisor can confirm it is you.</string>
+
+<!--
+  NSLocationAlwaysAndWhenInUseUsageDescription is deliberately omitted: the app
+  never requests background location.
+
+  App Attest also requires the App Attest capability on the App ID and the
+  com.apple.developer.devicecheck.appattest-environment entitlement.
+-->

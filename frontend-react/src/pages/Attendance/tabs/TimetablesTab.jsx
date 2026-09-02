@@ -103,7 +103,8 @@ const TimetablesTab = () => {
   /* ── T&A Areas (personnel_area — Lagos Area, Abuja Office, etc.) ─────────── */
   const { data: areasRaw } = useQuery({
     queryKey: ['ta-areas'],
-    queryFn: () => apiService.get('/api/device/areas/'),
+    // Warehouses replaced the old device areas as the location filter.
+    queryFn: () => apiService.get('/api/v1/zones/dashboard'),
     staleTime: 120000,
   });
   const areas = useMemo(() => {

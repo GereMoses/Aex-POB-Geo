@@ -1,0 +1,22 @@
+# Optional face verification for punch selfies.
+#
+# Adds roughly 300MB (runtime plus models) to the image, so it is kept out of
+# the base requirements. Without it the system falls back to a supervisor
+# reviewing photos by eye, which is the behaviour it had before.
+#
+#   pip install -r requirements-face.txt
+#
+# Models download on first use into ~/.insightface. In an air-gapped
+# deployment, pre-seed that directory and mount it into the container.
+# insightface requires numpy 2.x, whose ABI differs from the 1.25 the base
+# image ships. The already-installed pandas 2.1.4 was built against the old ABI
+# and dies on import with "numpy.dtype size changed", taking the whole
+# application down. Pinning numpy back breaks insightface instead, so pandas is
+# moved forward to a build that speaks numpy 2.
+#
+# This is the real cost of enabling face matching: it moves pandas underneath
+# the reporting and payroll code, which should be regression-tested after.
+pandas>=2.2.3
+onnxruntime>=1.17,<2
+opencv-python-headless>=4.9
+insightface>=0.7

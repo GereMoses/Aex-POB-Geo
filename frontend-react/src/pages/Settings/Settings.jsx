@@ -22,7 +22,7 @@ import {
 } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import apiService from '../../services/api';
-import EmailSetup from '../Emergency/EmailSetup';
+import EmailSetup from './EmailSetup';
 import DatabaseTab from './DatabaseTab';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -35,13 +35,12 @@ const { Password } = Input;
 
 // ── Permission module ordering / labels ──────────────────────────────────────
 const MODULE_ORDER = [
-  'personnel','attendance','devices','access_control',
-  'visitors','reports','pob','emergency','mustering','settings',
+  'personnel','attendance','reports','settings',
 ];
 const MODULE_LABEL = {
-  personnel: 'Personnel', attendance: 'Attendance', devices: 'Devices',
-  access_control: 'Access Control', visitors: 'Visitors', reports: 'Reports',
-  pob: 'POB Status', emergency: 'Emergency', mustering: 'Mustering', settings: 'Settings',
+  personnel: 'Personnel', attendance: 'Attendance', 
+  reports: 'Reports',
+  settings: 'Settings',
 };
 
 // ── User helper utilities ─────────────────────────────────────────────────────
@@ -954,13 +953,7 @@ const roleColor = (name = '') =>
 const MODULE_CONFIG = {
   personnel:      { label: 'Personnel',      color: '#3B82F6', icon: <TeamOutlined /> },
   attendance:     { label: 'Attendance',      color: '#10B981', icon: <ClockCircleOutlined /> },
-  devices:        { label: 'Devices',         color: '#8B5CF6', icon: <DesktopOutlined /> },
-  access_control: { label: 'Access Control',  color: '#EF4444', icon: <LockOutlined /> },
-  visitors:       { label: 'Visitors',        color: '#F59E0B', icon: <IdcardOutlined /> },
   reports:        { label: 'Reports',         color: '#EC4899', icon: <FileTextOutlined /> },
-  pob:            { label: 'POB Status',      color: '#14B8A6', icon: <BarChartOutlined /> },
-  emergency:      { label: 'Emergency',       color: '#DC2626', icon: <AlertOutlined /> },
-  mustering:      { label: 'Mustering',       color: '#6366F1', icon: <SafetyOutlined /> },
   settings:       { label: 'Settings',        color: '#64748B', icon: <SettingOutlined /> },
 };
 
@@ -2709,7 +2702,7 @@ const HRIntegrationTab = () => {
                   <Form.Item label="Client ID  (x-client-id)" name="client_id"
                     rules={[{ required: true, message: 'Enter the Client ID from SeamlessHR' }]}
                     extra="Not secret — shown in full so you can check the pairing">
-                    <Input placeholder="e.g. marconi-ng-prod" />
+                    <Input placeholder="e.g. acme-ng-prod" />
                   </Form.Item>
                 </Col>
                 <Col span={12}>
@@ -2740,7 +2733,7 @@ const HRIntegrationTab = () => {
                 <Col span={12}>
                   <Form.Item label="Organisation ID" name="org_id"
                     extra="Your company ID in SeamlessHR (if required)">
-                    <Input placeholder="e.g. marconi-nigeria" />
+                    <Input placeholder="e.g. acme-nigeria" />
                   </Form.Item>
                 </Col>
                 <Col span={12}>

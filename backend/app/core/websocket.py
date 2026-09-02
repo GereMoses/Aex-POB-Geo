@@ -9,6 +9,7 @@ import logging
 import os
 from typing import Dict, List, Optional
 from fastapi import WebSocket, WebSocketDisconnect
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +188,7 @@ def _publisher():
     global _pub_redis
     if _pub_redis is None:
         import redis as _redis
-        _pub_redis = _redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"))
+        _pub_redis = _redis.from_url(settings.REDIS_URL)
     return _pub_redis
 
 
@@ -229,7 +230,7 @@ async def zone_pubsub_listener() -> None:
     import redis.asyncio as aioredis
     while True:
         try:
-            r = aioredis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"))
+            r = aioredis.from_url(settings.REDIS_URL)
             ps = r.pubsub()
             await ps.subscribe(_ZONE_CHANNEL)
             logger.info("Zone pub/sub listener subscribed to %s", _ZONE_CHANNEL)

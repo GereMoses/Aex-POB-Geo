@@ -3,7 +3,7 @@ Celery Worker Configuration for Mustering System
 """
 
 from celery import Celery
-from app.services.mustering_celery_tasks import celery_app
+from app.services.celery_app import celery_app
 
 # Configure Celery worker
 app = celery_app

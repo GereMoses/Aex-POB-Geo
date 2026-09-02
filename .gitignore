@@ -85,3 +85,11 @@ backend/media/
 # Vendored ZKTeco PULL SDK (binaries — keep out of git)
 docs/Pull SDK-*.zip
 docs/pull_sdk_x/
+
+# ── Commercial documents ─────────────────────────────────────────────────────
+# Client and prospect proposals are business documents, not source. They carry
+# pricing and contract terms and have no reason to be in git history.
+*.docx
+*.xlsx
+*.pptx
+docs/*.pdf

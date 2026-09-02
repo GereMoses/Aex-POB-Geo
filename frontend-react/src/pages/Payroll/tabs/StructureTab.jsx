@@ -156,7 +156,7 @@ const StructureTab = ({ structures: propStructures, employees, onRefresh }) => {
       const values = await zoneForm.validateFields();
       setSaving(true);
       await apiCall('/api/v1/payroll/zone-allowances/', { method: 'POST', body: JSON.stringify({ ...values, structure_id: selected.id }) });
-      message.success('Zone allowance created');
+      message.success('Warehouse allowance created');
       setZoneModal({ open: false, record: null });
       await refreshStructures();
     } catch (e) { if (e.errorFields) return; message.error(e.message); } finally { setSaving(false); }
@@ -260,7 +260,7 @@ const StructureTab = ({ structures: propStructures, employees, onRefresh }) => {
   ];
 
   const zoneAllowanceCols = [
-    { title: 'Zone/Area', dataIndex: 'area_name', key: 'area', render: (v, r) => v || `Area ${r.area_id}` },
+    { title: 'Warehouse/Area', dataIndex: 'area_name', key: 'area', render: (v, r) => v || `Area ${r.area_id}` },
     {
       title: 'Type', dataIndex: 'allowance_type', key: 'type',
       render: v => <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600, color: '#d97706', background: '#fffbeb', border: '1px solid #fde68a' }}>{['Hourly', 'Daily', 'Fixed'][v] || v}</span>,
@@ -307,17 +307,17 @@ const StructureTab = ({ structures: propStructures, employees, onRefresh }) => {
     },
     {
       key: 'zone',
-      label: <span><EnvironmentOutlined /> Zone Allowances</span>,
+      label: <span><EnvironmentOutlined /> Warehouse Allowances</span>,
       children: (
         <div>
-          <Alert type="info" showIcon style={{ marginBottom: 10 }} message="Zone allowances are auto-applied during payroll calculation when an employee works in the defined area." />
+          <Alert type="info" showIcon style={{ marginBottom: 10 }} message="Warehouse allowances are auto-applied during payroll calculation when an employee works in the defined area." />
           <div style={{ marginBottom: 8, textAlign: 'right' }}>
             <Button size="small" icon={<PlusOutlined />} onClick={() => { zoneForm.resetFields(); zoneForm.setFieldsValue({ allowance_type: 1, is_hazard: false, is_active: true }); setZoneModal({ open: true, record: null }); }}>
-              Add Zone Allowance
+              Add Warehouse Allowance
             </Button>
           </div>
           <Table dataSource={selected?.zone_allowances || []} rowKey="id" size="small" pagination={false} columns={zoneAllowanceCols}
-            locale={{ emptyText: <Empty description="No zone allowances — add one to give zone-based pay automatically" /> }} />
+            locale={{ emptyText: <Empty description="No warehouse allowances — add one to give location-based pay automatically" /> }} />
         </div>
       ),
     },
@@ -527,9 +527,9 @@ const StructureTab = ({ structures: propStructures, employees, onRefresh }) => {
         </Form>
       </Modal>
 
-      {/* Add Zone Allowance Modal */}
+      {/* Add Warehouse Allowance Modal */}
       <Modal
-        title={<span><EnvironmentOutlined /> Add Zone Allowance — {selected?.structure_name}</span>}
+        title={<span><EnvironmentOutlined /> Add Warehouse Allowance — {selected?.structure_name}</span>}
         open={zoneModal.open}
         onOk={saveZoneAllowance}
         onCancel={() => setZoneModal({ open: false, record: null })}
@@ -538,7 +538,7 @@ const StructureTab = ({ structures: propStructures, employees, onRefresh }) => {
       >
         <Form form={zoneForm} layout="vertical" style={{ marginTop: 12 }}>
           <Row gutter={10}>
-            <Col span={14}><Form.Item name="area_id" label="Area / Zone ID" rules={[{ required: true }]}><InputNumber min={1} style={{ width: '100%' }} placeholder="Zone ID from Area Management" /></Form.Item></Col>
+            <Col span={14}><Form.Item name="area_id" label="Area / Warehouse ID" rules={[{ required: true }]}><InputNumber min={1} style={{ width: '100%' }} placeholder="Warehouse ID from Area Management" /></Form.Item></Col>
             <Col span={10}>
               <Form.Item name="allowance_type" label="Rate Type" rules={[{ required: true }]}>
                 <Select><Option value={0}>Hourly</Option><Option value={1}>Daily</Option><Option value={2}>Fixed (per period)</Option></Select>
@@ -549,7 +549,7 @@ const StructureTab = ({ structures: propStructures, employees, onRefresh }) => {
             <InputNumber min={0} style={{ width: '100%' }} formatter={v => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} />
           </Form.Item>
           <Row gutter={10}>
-            <Col span={10}><Form.Item name="is_hazard" label="Hazard Zone" valuePropName="checked"><Switch checkedChildren={<FireOutlined />} unCheckedChildren="No" /></Form.Item></Col>
+            <Col span={10}><Form.Item name="is_hazard" label="Hazard Warehouse" valuePropName="checked"><Switch checkedChildren={<FireOutlined />} unCheckedChildren="No" /></Form.Item></Col>
             <Col span={14}><Form.Item name="hazard_rate" label="Hazard Premium (%)"><InputNumber min={0} max={100} style={{ width: '100%' }} placeholder="e.g. 25 for 25%" /></Form.Item></Col>
           </Row>
           <Form.Item name="is_active" label="Active" valuePropName="checked" initialValue={true}><Switch /></Form.Item>

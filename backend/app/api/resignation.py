@@ -115,6 +115,78 @@ async def get_resignations(
         )
 
 
+@router.get("/statistics", response_model=dict)
+async def get_resignation_statistics(
+    db: Session = Depends(get_db)
+):
+    """
+    Get resignation statistics
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        Resignation statistics
+    """
+    try:
+        result = await resignation_service.get_resignation_statistics(db)
+        
+        if result["success"]:
+            return {
+                "success": True,
+                "data": result["data"]
+            }
+        else:
+            raise HTTPException(
+                status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get("error", "Failed to get statistics")
+            )
+    except Exception as e:
+        logger.error(f"Error in get_resignation_statistics: {str(e)}")
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+@router.get("/types", response_model=dict)
+async def get_resignation_types():
+    """
+    Get available resignation types
+    
+    Returns:
+        List of resignation types
+    """
+    return {
+        "success": True,
+        "data": [
+            {"value": "VOLUNTARY", "label": "Voluntary Resignation"},
+            {"value": "INVOLUNTARY", "label": "Involuntary Resignation"},
+            {"value": "RETIREMENT", "label": "Retirement"},
+            {"value": "TERMINATION", "label": "Termination"},
+            {"value": "CONTRACT_END", "label": "Contract End"}
+        ]
+    }
+
+
+@router.get("/task-types", response_model=dict)
+async def get_task_types():
+    """
+    Get available task types
+    
+    Returns:
+        List of task types
+    """
+    return {
+        "success": True,
+        "data": [
+            {"value": "EXIT_INTERVIEW", "label": "Exit Interview"},
+            {"value": "HANDOVER", "label": "Handover Process"},
+            {"value": "FINANCIAL", "label": "Financial Clearance"},
+            {"value": "ASSET_RETURN", "label": "Asset Return"},
+            {"value": "SYSTEM_ACCESS", "label": "System Access Revocation"}
+        ]
+    }
 @router.get("/{resignation_id}", response_model=dict)
 async def get_resignation_by_id(
     resignation_id: int,
@@ -186,6 +258,59 @@ async def update_resignation(
             )
     except Exception as e:
         logger.error(f"Error in update_resignation: {str(e)}")
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+@router.delete("/{resignation_id}", response_model=dict)
+async def delete_resignation(
+    resignation_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a resignation and its dependent task/document/notification rows.
+
+    Args:
+        resignation_id: Resignation ID
+        db: Database session
+
+    Returns:
+        Deletion confirmation
+    """
+    try:
+        from ..models.resignation import (
+            Resignation, ResignationTask, ResignationDocument, ResignationNotification
+        )
+
+        resignation = db.query(Resignation).filter(Resignation.id == resignation_id).first()
+        if not resignation:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail="Resignation not found"
+            )
+
+        # No DB-level cascade is declared on these tables, so clear the children
+        # explicitly or the delete fails on a foreign-key violation.
+        for model in (ResignationNotification, ResignationDocument, ResignationTask):
+            db.query(model).filter(model.resignation_id == resignation_id).delete(
+                synchronize_session=False
+            )
+
+        db.delete(resignation)
+        db.commit()
+
+        return {
+            "success": True,
+            "message": "Resignation deleted successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error in delete_resignation: {str(e)}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}"
@@ -509,40 +634,6 @@ async def get_resignation_documents(
         )
 
 
-@router.get("/statistics", response_model=dict)
-async def get_resignation_statistics(
-    db: Session = Depends(get_db)
-):
-    """
-    Get resignation statistics
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        Resignation statistics
-    """
-    try:
-        result = await resignation_service.get_resignation_statistics(db)
-        
-        if result["success"]:
-            return {
-                "success": True,
-                "data": result["data"]
-            }
-        else:
-            raise HTTPException(
-                status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result.get("error", "Failed to get statistics")
-            )
-    except Exception as e:
-        logger.error(f"Error in get_resignation_statistics: {str(e)}")
-        raise HTTPException(
-            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-
 @router.post("/bulk-action", response_model=dict)
 async def bulk_resignation_action(
     action: BulkResignationAction,
@@ -618,41 +709,3 @@ async def bulk_resignation_action(
         )
 
 
-@router.get("/types", response_model=dict)
-async def get_resignation_types():
-    """
-    Get available resignation types
-    
-    Returns:
-        List of resignation types
-    """
-    return {
-        "success": True,
-        "data": [
-            {"value": "VOLUNTARY", "label": "Voluntary Resignation"},
-            {"value": "INVOLUNTARY", "label": "Involuntary Resignation"},
-            {"value": "RETIREMENT", "label": "Retirement"},
-            {"value": "TERMINATION", "label": "Termination"},
-            {"value": "CONTRACT_END", "label": "Contract End"}
-        ]
-    }
-
-
-@router.get("/task-types", response_model=dict)
-async def get_task_types():
-    """
-    Get available task types
-    
-    Returns:
-        List of task types
-    """
-    return {
-        "success": True,
-        "data": [
-            {"value": "EXIT_INTERVIEW", "label": "Exit Interview"},
-            {"value": "HANDOVER", "label": "Handover Process"},
-            {"value": "FINANCIAL", "label": "Financial Clearance"},
-            {"value": "ASSET_RETURN", "label": "Asset Return"},
-            {"value": "SYSTEM_ACCESS", "label": "System Access Revocation"}
-        ]
-    }

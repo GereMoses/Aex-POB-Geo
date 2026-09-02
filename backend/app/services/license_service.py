@@ -20,7 +20,6 @@ from sqlalchemy import func, and_, or_
 from ..models.system import SystemLicense, SystemParameter
 from ..models.user import User
 from ..models.personnel import Personnel
-from ..models.device import Device
 from ..core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -340,7 +339,8 @@ class LicenseService:
             current_employees = self.db.query(Personnel).filter(Personnel.is_active == True).count()
             
             # Count active devices
-            current_devices = self.db.query(Device).filter(Device.is_active == True).count()
+            # No physical devices in a mobile-only deployment.
+            current_devices = 0
             
             # Count active locations/zones
             from ..models.system import Company
@@ -503,12 +503,6 @@ class LicenseService:
             employee_stats = self.db.query(
                 func.count(Personnel.id).label('total'),
                 func.sum(func.case([(Personnel.is_active == True, 1)], else_=0)).label('active')
-            ).first()
-            
-            # Device statistics
-            device_stats = self.db.query(
-                func.count(Device.id).label('total'),
-                func.sum(func.case([(Device.is_active == True, 1)], else_=0)).label('active')
             ).first()
             
             return {

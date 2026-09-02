@@ -12,7 +12,7 @@ const { Text } = Typography;
 const TYPE_META = {
   personnel:   { color: '#3B82F6', icon: <UserOutlined />,        label: 'Personnel' },
   device:      { color: '#8B5CF6', icon: <DesktopOutlined />,     label: 'Device' },
-  zone:        { color: '#10B981', icon: <EnvironmentOutlined />,  label: 'Zone' },
+  zone:        { color: '#10B981', icon: <EnvironmentOutlined />,  label: 'Warehouse' },
   visitor:     { color: '#F59E0B', icon: <IdcardOutlined />,       label: 'Visitor' },
   contractor:  { color: '#EF4444', icon: <TeamOutlined />,         label: 'Contractor' },
   department:  { color: '#6366F1', icon: <BankOutlined />,         label: 'Department' },
@@ -80,7 +80,7 @@ const GlobalSearch = ({ open, onClose }) => {
         <Input
           ref={inputRef}
           prefix={loading ? <Spin size="small" /> : <SearchOutlined style={{ color: '#9CA3AF' }} />}
-          placeholder="Search personnel, devices, zones, visitors…"
+          placeholder="Search personnel, warehouses…"
           value={query}
           onChange={e => setQuery(e.target.value)}
           onKeyDown={handleKey}

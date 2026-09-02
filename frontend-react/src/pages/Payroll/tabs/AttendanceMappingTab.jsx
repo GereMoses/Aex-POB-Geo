@@ -20,9 +20,9 @@ const FIELD_DESCRIPTIONS = {
   absent_days:  'Absent days without approved leave',
   work_days:    'Total scheduled work days in period',
   present_days: 'Days employee was actually present',
-  zone_hours:   'Hours worked inside designated POB zones',
+  zone_hours:   'Hours worked on site at a warehouse',
   night_hours:  'Hours worked between 22:00 and 06:00',
-  hazard_days:  'Days worked in hazard-classified zones',
+  hazard_days:  'Days worked at a hazard-rated warehouse',
 };
 
 const POB_FIELDS = new Set(['zone_hours', 'night_hours', 'hazard_days']);
@@ -213,9 +213,9 @@ const AttendanceMappingTab = () => {
           size="small"
           pagination={false}
           dataSource={[
-            { key: 'zone_hours',  field: 'zone_hours',  desc: 'Hours in POB offshore/restricted zones',     used_for: 'Zone Allowance calculations' },
+            { key: 'zone_hours',  field: 'zone_hours',  desc: 'Hours on site at a warehouse',     used_for: 'Warehouse Allowance calculations' },
             { key: 'night_hours', field: 'night_hours', desc: 'Night shift hours (22:00–06:00)',             used_for: 'Night differential pay'      },
-            { key: 'hazard_days', field: 'hazard_days', desc: 'Days in hazardous classification zones',      used_for: 'Hazard premium'              },
+            { key: 'hazard_days', field: 'hazard_days', desc: 'Days at a hazard-rated warehouse',      used_for: 'Hazard premium'              },
           ]}
           columns={[
             { title: 'Field', dataIndex: 'field', render: v => <CodePill value={v} variant="orange" /> },

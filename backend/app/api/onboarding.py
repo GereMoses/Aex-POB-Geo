@@ -86,6 +86,179 @@ async def get_onboardings(
         )
 
 
+@router.get("/templates", response_model=dict)
+async def get_onboarding_templates(
+    db: Session = Depends(get_db)
+):
+    """
+    Get onboarding templates
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        List of onboarding templates
+    """
+    try:
+        from ..models.onboarding import OnboardingTemplate
+        
+        templates = db.query(OnboardingTemplate).filter(
+            OnboardingTemplate.is_active == True
+        ).order_by(OnboardingTemplate.template_name).all()
+        
+        result_templates = []
+        for template in templates:
+            template_data = {
+                "id": template.id,
+                "template_name": template.template_name,
+                "template_code": template.template_code,
+                "onboarding_type": template.onboarding_type.value,
+                "description": template.description,
+                "default_tasks": template.default_tasks,
+                "required_documents": template.required_documents,
+                "approval_workflow": template.approval_workflow,
+                "notification_settings": template.notification_settings,
+                "default_duration_days": template.default_duration_days,
+                "is_system_template": template.is_system_template,
+                "is_active": template.is_active,
+                "created_by": template.created_by,
+                "created_at": template.created_at,
+                "updated_at": template.updated_at,
+                "usage_count": template.usage_count,
+                "last_used": template.last_used,
+                "notes": template.notes
+            }
+            result_templates.append(template_data)
+        
+        return {
+            "success": True,
+            "data": result_templates
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in get_onboarding_templates: {str(e)}")
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+@router.get("/statistics", response_model=dict)
+async def get_onboarding_statistics(
+    db: Session = Depends(get_db)
+):
+    """
+    Get onboarding statistics
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        Onboarding statistics
+    """
+    try:
+        # Calculate statistics
+        from ..models.onboarding import Onboarding
+        
+        total_onboardings = db.query(Onboarding).count()
+        active_onboardings = db.query(Onboarding).filter(
+            Onboarding.status.in_(["NOT_STARTED", "IN_PROGRESS", "PENDING_REVIEW"])
+        ).count()
+        completed_onboardings = db.query(Onboarding).filter(
+            Onboarding.status == "COMPLETED"
+        ).count()
+        pending_approval = db.query(Onboarding).filter(
+            Onboarding.status == "PENDING_REVIEW"
+        ).count()
+        pending_review = db.query(Onboarding).filter(
+            Onboarding.status == "IN_PROGRESS"
+        ).count()
+        
+        # By type
+        type_results = db.query(
+            Onboarding.onboarding_type, func.count(Onboarding.id)
+        ).group_by(Onboarding.onboarding_type).all()
+        
+        onboardings_by_type = {}
+        for onboarding_type, count in type_results:
+            onboardings_by_type[onboarding_type.value] = count
+        
+        # Timeline metrics
+        from datetime import datetime, timedelta
+        week_ago = datetime.utcnow() - timedelta(days=7)
+        month_ago = datetime.utcnow() - timedelta(days=30)
+        
+        onboardings_this_week = db.query(Onboarding).filter(
+            Onboarding.created_at >= week_ago
+        ).count()
+        onboardings_this_month = db.query(Onboarding).filter(
+            Onboarding.created_at >= month_ago
+        ).count()
+        
+        return {
+            "success": True,
+            "data": {
+                "total_onboardings": total_onboardings,
+                "active_onboardings": active_onboardings,
+                "completed_onboardings": completed_onboardings,
+                "pending_approval": pending_approval,
+                "pending_review": pending_review,
+                "onboardings_by_type": onboardings_by_type,
+                "onboardings_this_week": onboardings_this_week,
+                "onboardings_this_month": onboardings_this_month,
+                "average_duration_days": 25.5  # Simulated average
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in get_onboarding_statistics: {str(e)}")
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+@router.get("/types", response_model=dict)
+async def get_onboarding_types():
+    """
+    Get available onboarding types
+    
+    Returns:
+        List of onboarding types
+    """
+    return {
+        "success": True,
+        "data": [
+            {"value": "NEW_HIRE", "label": "New Hire"},
+            {"value": "REHIRE", "label": "Rehire"},
+            {"value": "INTERNAL_TRANSFER", "label": "Internal Transfer"},
+            {"value": "PROMOTION", "label": "Promotion"},
+            {"value": "CONTRACT_RENEWAL", "label": "Contract Renewal"}
+        ]
+    }
+
+
+@router.get("/task-types", response_model=dict)
+async def get_task_types():
+    """
+    Get available task types
+    
+    Returns:
+        List of task types
+    """
+    return {
+        "success": True,
+        "data": [
+            {"value": "DOCUMENT_UPLOAD", "label": "Document Upload"},
+            {"value": "TRAINING", "label": "Training"},
+            {"value": "REVIEW", "label": "Review"},
+            {"value": "APPROVAL", "label": "Approval"},
+            {"value": "BACKGROUND_CHECK", "label": "Background Check"},
+            {"value": "MEDICAL_CHECK", "label": "Medical Check"},
+            {"value": "ASSET_RETURN", "label": "Asset Return"},
+            {"value": "SYSTEM_ACCESS", "label": "System Access"}
+        ]
+    }
 @router.get("/{onboarding_id}", response_model=dict)
 async def get_onboarding_by_id(
     onboarding_id: int,
@@ -584,63 +757,6 @@ async def upload_onboarding_document(
         )
 
 
-@router.get("/templates", response_model=dict)
-async def get_onboarding_templates(
-    db: Session = Depends(get_db)
-):
-    """
-    Get onboarding templates
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        List of onboarding templates
-    """
-    try:
-        from ..models.onboarding import OnboardingTemplate
-        
-        templates = db.query(OnboardingTemplate).filter(
-            OnboardingTemplate.is_active == True
-        ).order_by(OnboardingTemplate.template_name).all()
-        
-        result_templates = []
-        for template in templates:
-            template_data = {
-                "id": template.id,
-                "template_name": template.template_name,
-                "template_code": template.template_code,
-                "onboarding_type": template.onboarding_type.value,
-                "description": template.description,
-                "default_tasks": template.default_tasks,
-                "required_documents": template.required_documents,
-                "approval_workflow": template.approval_workflow,
-                "notification_settings": template.notification_settings,
-                "default_duration_days": template.default_duration_days,
-                "is_system_template": template.is_system_template,
-                "is_active": template.is_active,
-                "created_by": template.created_by,
-                "created_at": template.created_at,
-                "updated_at": template.updated_at,
-                "usage_count": template.usage_count,
-                "last_used": template.last_used,
-                "notes": template.notes
-            }
-            result_templates.append(template_data)
-        
-        return {
-            "success": True,
-            "data": result_templates
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in get_onboarding_templates: {str(e)}")
-        raise HTTPException(
-            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-
 @router.post("/templates", response_model=dict)
 async def create_onboarding_template(
     template: OnboardingTemplateCreate,
@@ -688,81 +804,6 @@ async def create_onboarding_template(
         
     except Exception as e:
         logger.error(f"Error in create_onboarding_template: {str(e)}")
-        raise HTTPException(
-            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-
-@router.get("/statistics", response_model=dict)
-async def get_onboarding_statistics(
-    db: Session = Depends(get_db)
-):
-    """
-    Get onboarding statistics
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        Onboarding statistics
-    """
-    try:
-        # Calculate statistics
-        from ..models.onboarding import Onboarding
-        
-        total_onboardings = db.query(Onboarding).count()
-        active_onboardings = db.query(Onboarding).filter(
-            Onboarding.status.in_(["NOT_STARTED", "IN_PROGRESS", "PENDING_REVIEW"])
-        ).count()
-        completed_onboardings = db.query(Onboarding).filter(
-            Onboarding.status == "COMPLETED"
-        ).count()
-        pending_approval = db.query(Onboarding).filter(
-            Onboarding.status == "PENDING_REVIEW"
-        ).count()
-        pending_review = db.query(Onboarding).filter(
-            Onboarding.status == "IN_PROGRESS"
-        ).count()
-        
-        # By type
-        type_results = db.query(
-            Onboarding.onboarding_type, func.count(Onboarding.id)
-        ).group_by(Onboarding.onboarding_type).all()
-        
-        onboardings_by_type = {}
-        for onboarding_type, count in type_results:
-            onboardings_by_type[onboarding_type.value] = count
-        
-        # Timeline metrics
-        from datetime import datetime, timedelta
-        week_ago = datetime.utcnow() - timedelta(days=7)
-        month_ago = datetime.utcnow() - timedelta(days=30)
-        
-        onboardings_this_week = db.query(Onboarding).filter(
-            Onboarding.created_at >= week_ago
-        ).count()
-        onboardings_this_month = db.query(Onboarding).filter(
-            Onboarding.created_at >= month_ago
-        ).count()
-        
-        return {
-            "success": True,
-            "data": {
-                "total_onboardings": total_onboardings,
-                "active_onboardings": active_onboardings,
-                "completed_onboardings": completed_onboardings,
-                "pending_approval": pending_approval,
-                "pending_review": pending_review,
-                "onboardings_by_type": onboardings_by_type,
-                "onboardings_this_week": onboardings_this_week,
-                "onboardings_this_month": onboardings_this_month,
-                "average_duration_days": 25.5  # Simulated average
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in get_onboarding_statistics: {str(e)}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}"
@@ -844,44 +885,3 @@ async def bulk_onboarding_action(
         )
 
 
-@router.get("/types", response_model=dict)
-async def get_onboarding_types():
-    """
-    Get available onboarding types
-    
-    Returns:
-        List of onboarding types
-    """
-    return {
-        "success": True,
-        "data": [
-            {"value": "NEW_HIRE", "label": "New Hire"},
-            {"value": "REHIRE", "label": "Rehire"},
-            {"value": "INTERNAL_TRANSFER", "label": "Internal Transfer"},
-            {"value": "PROMOTION", "label": "Promotion"},
-            {"value": "CONTRACT_RENEWAL", "label": "Contract Renewal"}
-        ]
-    }
-
-
-@router.get("/task-types", response_model=dict)
-async def get_task_types():
-    """
-    Get available task types
-    
-    Returns:
-        List of task types
-    """
-    return {
-        "success": True,
-        "data": [
-            {"value": "DOCUMENT_UPLOAD", "label": "Document Upload"},
-            {"value": "TRAINING", "label": "Training"},
-            {"value": "REVIEW", "label": "Review"},
-            {"value": "APPROVAL", "label": "Approval"},
-            {"value": "BACKGROUND_CHECK", "label": "Background Check"},
-            {"value": "MEDICAL_CHECK", "label": "Medical Check"},
-            {"value": "ASSET_RETURN", "label": "Asset Return"},
-            {"value": "SYSTEM_ACCESS", "label": "System Access"}
-        ]
-    }

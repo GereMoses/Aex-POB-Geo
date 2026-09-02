@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0F172A">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Apex Clock</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Sign in -->
+  <section id="login">
+    <img class="brand" src="icon-192.png" alt="Apex POB">
+    <h1>Apex Clock</h1>
+    <p class="muted">Sign in with your employee number</p>
+    <input id="u" placeholder="Employee number" autocapitalize="characters" autocomplete="username">
+    <!-- Reveal toggle: these passwords are handed out on paper and typed on a
+         phone keypad, so letting someone check what they typed prevents a lot
+         of "the app will not let me in". -->
+    <div class="pw">
+      <input id="p" type="password" placeholder="Password" autocomplete="current-password">
+      <button type="button" id="pwToggle" class="pw-eye" aria-label="Show password">Show</button>
+    </div>
+    <div id="loginErr" class="banner bad hide"></div>
+    <button class="in" id="signin">Sign in</button>
+
+    <!-- Only needed when the server address changes. Hidden by default so it
+         cannot be mistaken for something an employee must fill in. -->
+    <button type="button" class="link" id="serverToggle">Server address</button>
+    <div id="serverBox" class="hide">
+      <input id="serverUrl" placeholder="https://your-apex-server" autocapitalize="none"
+             autocomplete="off" spellcheck="false" inputmode="url">
+      <div class="row">
+        <button class="out small" id="serverSave">Save address</button>
+        <button class="link" id="serverReset">Use default</button>
+      </div>
+      <p class="muted" id="serverNow"></p>
+    </div>
+  </section>
+
+  <!-- Clock -->
+  <section id="app" class="hide">
+    <div class="topbar">
+      <div class="brandline">
+        <img class="brand-sm" src="icon-192.png" alt="">
+        <h1>Apex Clock</h1>
+      </div>
+      <div class="actions">
+        <button class="link auto" id="refresh" title="Check for changes">Refresh</button>
+        <button class="link auto" id="signout">Sign out</button>
+      </div>
+    </div>
+
+    <!-- Who the app believes is signed in. Shown so somebody handed the wrong
+         credentials notices before clocking in as a colleague. -->
+    <div id="whoami" class="who hide">
+      <div class="who-name" id="whoName"></div>
+      <div class="who-id" id="whoId"></div>
+    </div>
+
+    <div id="status" class="card">
+      <div class="headline">Finding your location…</div>
+      <div class="muted">Step outside if you are inside the building.</div>
+    </div>
+
+    <!-- Where the employee is allowed to clock in, with the exact coordinates
+         and radius, refreshed from the server so a reassignment shows up here
+         without signing out. -->
+    <div id="assigned" class="assigned hide">
+      <div class="assigned-title">Where you can clock in</div>
+      <div id="assignedList"></div>
+    </div>
+
+    <div id="notice" class="banner bad hide"></div>
+
+    <div id="photoWrap" class="hide">
+      <video id="cam" playsinline muted></video>
+      <canvas id="shot" class="hide"></canvas>
+      <div class="row">
+        <button class="out small" id="capture">Take photo</button>
+        <button class="link" id="cancelPhoto">Cancel</button>
+      </div>
+    </div>
+
+    <div id="enrolPrompt" class="banner info hide">
+      <div id="enrolMsg">Register your photo so the system can confirm it is you.</div>
+      <div class="row">
+        <button class="out small" id="enrolNow">Register my photo</button>
+        <button class="link" id="enrolLater">Not now</button>
+      </div>
+    </div>
+
+    <div id="controls">
+      <button class="in"  id="clockIn" disabled>Clock in</button>
+      <button class="out" id="clockOut" disabled>Clock out</button>
+    </div>
+
+    <div id="receipt" class="card hide"></div>
+    <p class="muted footnote" id="browserNote">
+      Browser version. Your supervisor may ask you to install the Apex Clock app.
+    </p>
+  </section>
+</div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -10,37 +10,15 @@ import Layout from './components/Layout/Layout';
 import Dashboard from './pages/Dashboard/Dashboard';
 import Personnel from './pages/Personnel';
 import AttendanceManagement from './pages/Attendance/AttendanceManagement';
-import DeviceManagement from './pages/Devices/Device';
-import AccessControl from './pages/AccessControl/AccessControl';
-import MusteringManagement from './pages/Mustering/MusteringManagement';
-import MusteringLiveMap from './pages/Mustering/MusteringLiveMap';
-import MusteringMobile from './pages/Mustering/MusteringMobile';
-import Mustering from './pages/Mustering/Mustering';
-import EmergencyManagement from './pages/Emergency/EmergencyManagement';
-import EmergencyMain from './pages/Emergency/EmergencyMain';
-import EmergencyDashboard from './pages/Emergency/EmergencyDashboard';
-import EmergencyLockdown from './pages/Emergency/EmergencyLockdown';
-import EmergencyFireMode from './pages/Emergency/EmergencyFireMode';
-import EmergencyDevices from './pages/Emergency/EmergencyDevices';
-import EmergencyPlans from './pages/Emergency/EmergencyPlans';
-import EmergencyNotifications from './pages/Emergency/EmergencyNotifications';
-import EmergencyTriggers from './pages/Emergency/EmergencyTriggers';
-import EmergencyAudit from './pages/Emergency/EmergencyAudit';
-import EmergencyResponse from './pages/EmergencyResponse/EmergencyResponse';
 import Reports from './pages/Reports/Reports';
 import Settings from './pages/Settings/Settings';
 import Login from './pages/Auth/Login';
-import Visitor from './pages/Visitor/Visitor';
-import Meeting from './pages/Meeting/Meeting';
 import ZoneManagement from './pages/Zones/ZoneManagement';
-import POBStatus from './pages/POBStatus/POBStatus';
+import GeofenceManagement from './pages/Geofence/GeofenceManagement';
 import Payroll from './pages/Payroll/Payroll';
-import MTD from './pages/MTD/MTD';
-import TransportManifest from './pages/Transport/TransportManifest';
 import SubscriptionDashboard from './pages/Subscription/SubscriptionDashboard';
 import LicenseExpiredScreen from './components/LicenseExpiredScreen';
 import NotificationsPage from './pages/Notifications/NotificationsPage';
-import Kiosk from './pages/Visitor/components/Kiosk';
 
 const ThemedShell = ({ children }) => {
   const { antdConfig } = useTheme();
@@ -56,7 +34,6 @@ const queryClient = new QueryClient({
     },
   },
 });
-
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = React.useState(false);
@@ -96,7 +73,6 @@ function App() {
         setUser(null);
       });
   }, []);
-
 
   const ProtectedRoute = ({ permission, children }) => {
     if (permission && !user?.is_superuser && !(user?.permissions || []).includes(permission)) {
@@ -176,10 +152,9 @@ function App() {
         <ThemedShell>
         <AntdApp>
         {!isAuthenticated ? (
-          <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <Router basename={process.env.PUBLIC_URL || "/"} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <Routes>
               {/* Public kiosk — accessible without login */}
-              <Route path="/visitor/kiosk" element={<Kiosk />} />
               {/* Anything else → login */}
               <Route path="/*" element={<Login onLogin={handleLogin} />} />
             </Routes>
@@ -191,18 +166,14 @@ function App() {
             onLoginAsAdmin={handleLogout}
           />
         ) : (
-        <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <Router basename={process.env.PUBLIC_URL || "/"} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <Layout user={user} onLogout={handleLogout}>
             <Routes>
               {/* Public kiosk — also accessible when logged in */}
-              <Route path="/visitor/kiosk" element={<Kiosk />} />
 
               {/* Dashboard — no permission required */}
               <Route path="/" element={<Dashboard />} />
               <Route path="/dashboard" element={<Dashboard />} />
-
-              {/* POB Status */}
-              <Route path="/pob-status" element={<ProtectedRoute permission="pob.view"><POBStatus /></ProtectedRoute>} />
 
               {/* Personnel Management */}
               <Route path="/personnel/*" element={<ProtectedRoute permission="personnel.view"><Personnel /></ProtectedRoute>} />
@@ -219,80 +190,15 @@ function App() {
               <Route path="/attendance/summary" element={<ProtectedRoute permission="attendance.view"><AttendanceManagement /></ProtectedRoute>} />
 
               {/* Device Management */}
-              <Route path="/device" element={<ProtectedRoute permission="devices.view"><DeviceManagement /></ProtectedRoute>} />
-              <Route path="/devices" element={<ProtectedRoute permission="devices.view"><DeviceManagement /></ProtectedRoute>} />
 
-              {/* Access Control */}
-              <Route path="/access-control" element={<ProtectedRoute permission="access_control.view"><AccessControl /></ProtectedRoute>} />
-              <Route path="/access-control/timezone" element={<ProtectedRoute permission="access_control.view"><AccessControl /></ProtectedRoute>} />
-              <Route path="/access-control/levels" element={<ProtectedRoute permission="access_control.view"><AccessControl /></ProtectedRoute>} />
-              <Route path="/access-control/doors" element={<ProtectedRoute permission="access_control.view"><AccessControl /></ProtectedRoute>} />
-              <Route path="/access-control/controllers" element={<ProtectedRoute permission="access_control.view"><AccessControl /></ProtectedRoute>} />
-              <Route path="/access-control/events" element={<ProtectedRoute permission="access_control.view"><AccessControl /></ProtectedRoute>} />
-
-              {/* Emergency */}
-              <Route path="/emergency" element={<ProtectedRoute permission="emergency.view"><EmergencyMain /></ProtectedRoute>} />
-              <Route path="/emergency/dashboard" element={<ProtectedRoute permission="emergency.view"><EmergencyDashboard /></ProtectedRoute>} />
-              <Route path="/emergency/management" element={<ProtectedRoute permission="emergency.view"><EmergencyManagement /></ProtectedRoute>} />
-              <Route path="/emergency/lockdown" element={<ProtectedRoute permission="emergency.view"><EmergencyLockdown /></ProtectedRoute>} />
-              <Route path="/emergency/fire-mode" element={<ProtectedRoute permission="emergency.view"><EmergencyFireMode /></ProtectedRoute>} />
-              <Route path="/emergency/devices" element={<ProtectedRoute permission="emergency.view"><EmergencyDevices /></ProtectedRoute>} />
-              <Route path="/emergency/plans" element={<ProtectedRoute permission="emergency.view"><EmergencyPlans /></ProtectedRoute>} />
-              <Route path="/emergency/notifications" element={<ProtectedRoute permission="emergency.view"><EmergencyNotifications /></ProtectedRoute>} />
-              <Route path="/emergency/triggers" element={<ProtectedRoute permission="emergency.view"><EmergencyTriggers /></ProtectedRoute>} />
-              <Route path="/emergency/audit" element={<ProtectedRoute permission="emergency.view"><EmergencyAudit /></ProtectedRoute>} />
-              <Route path="/emergency/status" element={<ProtectedRoute permission="emergency.view"><EmergencyDashboard /></ProtectedRoute>} />
-              {/* Emergency Response (combined response centre) */}
-              <Route path="/emergency-response" element={<ProtectedRoute permission="emergency.view"><EmergencyResponse /></ProtectedRoute>} />
-              <Route path="/emergency-response/emergency" element={<ProtectedRoute permission="emergency.view"><EmergencyResponse /></ProtectedRoute>} />
-              <Route path="/emergency-response/mustering" element={<ProtectedRoute permission="emergency.view"><EmergencyResponse /></ProtectedRoute>} />
-              {/* Mustering */}
-              <Route path="/mustering" element={<ProtectedRoute permission="mustering.view"><Mustering /></ProtectedRoute>} />
-              <Route path="/mustering/management" element={<ProtectedRoute permission="mustering.view"><MusteringManagement /></ProtectedRoute>} />
-              <Route path="/mustering/events" element={<ProtectedRoute permission="mustering.view"><MusteringManagement /></ProtectedRoute>} />
-              <Route path="/mustering/live-map" element={<ProtectedRoute permission="mustering.view"><MusteringLiveMap /></ProtectedRoute>} />
-              <Route path="/mustering/zones" element={<ProtectedRoute permission="mustering.view"><MusteringLiveMap /></ProtectedRoute>} />
-              <Route path="/mustering/logs" element={<ProtectedRoute permission="mustering.view"><MusteringManagement /></ProtectedRoute>} />
-              <Route path="/mustering/mobile" element={<ProtectedRoute permission="mustering.view"><MusteringMobile /></ProtectedRoute>} />
-
-              {/* Visitor Management */}
-              <Route path="/visitor" element={<ProtectedRoute permission="visitors.view"><Visitor /></ProtectedRoute>} />
-              <Route path="/visitor/pre-registration" element={<ProtectedRoute permission="visitors.view"><Visitor /></ProtectedRoute>} />
-              <Route path="/visitor/check-in" element={<ProtectedRoute permission="visitors.view"><Visitor /></ProtectedRoute>} />
-              <Route path="/visitor/check-out" element={<ProtectedRoute permission="visitors.view"><Visitor /></ProtectedRoute>} />
-              <Route path="/visitor/records" element={<ProtectedRoute permission="visitors.view"><Visitor /></ProtectedRoute>} />
-              <Route path="/visitor/blacklist" element={<ProtectedRoute permission="visitors.view"><Visitor /></ProtectedRoute>} />
-              <Route path="/visitor/host-approval" element={<ProtectedRoute permission="visitors.view"><Visitor /></ProtectedRoute>} />
-              <Route path="/visitor/types" element={<ProtectedRoute permission="visitors.view"><Visitor /></ProtectedRoute>} />
-              <Route path="/visitor/ports" element={<ProtectedRoute permission="visitors.view"><Visitor /></ProtectedRoute>} />
-
-              {/* Meeting Management — no specific permission yet */}
-              <Route path="/meeting" element={<Meeting />} />
-              <Route path="/meeting/rooms" element={<Meeting />} />
-              <Route path="/meeting/bookings" element={<Meeting />} />
-              <Route path="/meeting/checkin" element={<Meeting />} />
-              <Route path="/meeting/approval" element={<Meeting />} />
-              <Route path="/meeting/minutes" element={<Meeting />} />
-              <Route path="/meeting/equipment" element={<Meeting />} />
-              <Route path="/meeting/ports" element={<Meeting />} />
-
-              {/* Zone Management */}
+              {/* Warehouse Management */}
               <Route path="/zones" element={<ZoneManagement />} />
-
-              {/* Transport Manifest */}
-              <Route path="/transport-manifest" element={<TransportManifest />} />
-
-              {/* MTD */}
-              <Route path="/mtd" element={<MTD />} />
-              <Route path="/mtd/*" element={<MTD />} />
+              <Route path="/geofence" element={<ProtectedRoute permission="attendance.view"><GeofenceManagement /></ProtectedRoute>} />
 
               {/* Reports */}
               <Route path="/reports" element={<ProtectedRoute permission="reports.view"><Reports /></ProtectedRoute>} />
               <Route path="/reports/attendance" element={<ProtectedRoute permission="reports.view"><Reports /></ProtectedRoute>} />
               <Route path="/reports/personnel" element={<ProtectedRoute permission="reports.view"><Reports /></ProtectedRoute>} />
-              <Route path="/reports/devices" element={<ProtectedRoute permission="reports.view"><Reports /></ProtectedRoute>} />
-              <Route path="/reports/mustering" element={<ProtectedRoute permission="reports.view"><Reports /></ProtectedRoute>} />
-              <Route path="/reports/emergency" element={<ProtectedRoute permission="reports.view"><Reports /></ProtectedRoute>} />
 
               {/* Settings */}
               <Route path="/settings" element={<ProtectedRoute permission="settings.view"><Settings /></ProtectedRoute>} />

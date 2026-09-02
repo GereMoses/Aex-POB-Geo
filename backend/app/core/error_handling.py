@@ -150,6 +150,22 @@ class ErrorHandler:
         """Handle Pydantic validation errors"""
         logger.error(f"Validation error in {operation}: {error}")
         
+        def _jsonable(value):
+            """
+            Pydantic reports a missing query/body field with input=PydanticUndefined,
+            which json.dumps cannot encode — serialising it raised inside the error
+            handler and turned every such 422 into an opaque 500.
+            """
+            if value is None or isinstance(value, (str, int, float, bool)):
+                return value
+            if isinstance(value, (list, tuple)):
+                return [_jsonable(v) for v in value]
+            if isinstance(value, dict):
+                return {str(k): _jsonable(v) for k, v in value.items()}
+            if type(value).__name__ == "PydanticUndefinedType":
+                return None
+            return str(value)
+
         errors = []
         for err in error.errors():
             loc = err.get("loc", ())
@@ -158,7 +174,7 @@ class ErrorHandler:
                 "field": field,
                 "message": err.get("msg", ""),
                 "type": err.get("type", ""),
-                "input": err.get("input")
+                "input": _jsonable(err.get("input"))
             })
         
         return {

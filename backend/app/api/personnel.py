@@ -33,14 +33,12 @@ from ..services.audit_trail import audit_trail_service
 from ..services.personnel_analytics import personnel_analytics_service
 from ..services.personnel_export import personnel_export_service
 from ..services.zone_service import ZoneService
-from ..services.biotime_sync_service import biotime_sync_service
 from ..services.personnel_biotime_service import PersonnelBioTimeService
 
 router = APIRouter()
 
 # Initialize zone service for zones-only architecture
 zone_service = ZoneService()
-
 
 def _person_to_dict(p: Personnel) -> Dict[str, Any]:
     """Serialize a Personnel ORM row to a plain dict with all BioTime + POB fields."""
@@ -93,7 +91,6 @@ def _person_to_dict(p: Personnel) -> Dict[str, Any]:
         "created_at": _iso(p.created_at),
         "updated_at": _iso(p.updated_at),
     }
-
 
 @router.get("/employees", response_model=Dict[str, Any])
 @router.get("/", response_model=Dict[str, Any])
@@ -201,6 +198,27 @@ async def get_personnel(
 
         results = [_person_to_dict(p) for p in personnel]
 
+        # Which warehouses each person may clock in at. Fetched in one query for
+        # the whole page rather than per row — this list is the main personnel
+        # screen and an N+1 here would be felt immediately.
+        if results:
+            assignments = db.execute(text("""
+                SELECT zpa.personnel_id, z.id AS zone_id, z.name, z.code
+                FROM zone_personnel_assignments zpa
+                JOIN zones z ON z.id = zpa.zone_id
+                WHERE zpa.personnel_id = ANY(:ids)
+                  AND zpa.status = 'ACTIVE'
+                  AND zpa.unassigned_at IS NULL
+                  AND z.is_active IS TRUE
+                ORDER BY zpa.is_primary_zone DESC, z.name
+            """), {"ids": [r["id"] for r in results]}).fetchall()
+            by_person: Dict[int, list] = {}
+            for a in assignments:
+                by_person.setdefault(a.personnel_id, []).append(
+                    {"zone_id": a.zone_id, "name": a.name, "code": a.code})
+            for r in results:
+                r["assigned_warehouses"] = by_person.get(r["id"], [])
+
         return {
             "results": results,
             "count": total,
@@ -213,7 +231,6 @@ async def get_personnel(
         import traceback
         traceback.print_exc()
         return {"results": [], "count": 0, "current_page": 1, "page_size": page_size, "total_pages": 0}
-
 
 @router.get("/status-summary")
 async def get_status_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
@@ -234,7 +251,6 @@ async def get_status_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get status summary: {str(e)}"
         )
-
 
 @router.get("/onboard")
 async def get_onboard_personnel(
@@ -266,7 +282,6 @@ async def get_onboard_personnel(
             detail=f"Failed to get onboard personnel: {str(e)}"
         )
 
-
 @router.post("/bulk-reset-onboard")
 async def bulk_reset_onboard(
     body: dict,
@@ -295,7 +310,6 @@ async def bulk_reset_onboard(
         "cleared_ids": cleared,
         "message": f"{len(cleared)} personnel marked as offboard.",
     }
-
 
 @router.get("/dashboard")
 async def get_personnel_dashboard(db: Session = Depends(get_db)) -> dict:
@@ -328,13 +342,28 @@ async def get_personnel_dashboard(db: Session = Depends(get_db)) -> dict:
             avg_compliance_score = db.query(func.avg(Personnel.compliance_score)).scalar() or 0
             avg_compliance = round(float(avg_compliance_score), 1)
         
-        # Zone distribution (zones-only architecture)
-        zone_data = db.query(
-            Personnel.current_zone_id,
-            func.count(Personnel.id).label('count')
-        ).filter(Personnel.current_zone_id.isnot(None)).group_by(Personnel.current_zone_id).all()
-        
-        zone_distribution = {f"Zone {zone_id}": count for zone_id, count in zone_data}
+        # Warehouse distribution, by name rather than by id — this is read by
+        # people, and "Zone 4" tells them nothing.
+        warehouse_data = db.execute(text("""
+            SELECT z.name, COUNT(p.id) AS count
+            FROM personnel p
+            JOIN zones z ON z.id = p.current_zone_id
+            WHERE p.current_zone_id IS NOT NULL
+            GROUP BY z.name
+        """)).fetchall()
+        zone_distribution = {r.name: r.count for r in warehouse_data}
+
+        # Whether staff can clock in at all. An employee with no warehouse
+        # assignment is refused at every gate, so this is the number that
+        # matters most before a go-live.
+        assigned_count = db.execute(text("""
+            SELECT COUNT(DISTINCT zpa.personnel_id)
+            FROM zone_personnel_assignments zpa
+            JOIN personnel p ON p.id = zpa.personnel_id
+            WHERE zpa.status = 'ACTIVE' AND zpa.unassigned_at IS NULL
+              AND p.is_active IS TRUE
+        """)).scalar() or 0
+        active_total = db.query(Personnel).filter(Personnel.is_active == True).count()
         
         return {
             "total_personnel": total,
@@ -357,6 +386,10 @@ async def get_personnel_dashboard(db: Session = Depends(get_db)) -> dict:
                 "not_enrolled": total - biometric_enrolled
             },
             "zone_distribution": zone_distribution,
+            "warehouse_assignment": {
+                "assigned": assigned_count,
+                "unassigned": max(0, active_total - assigned_count),
+            },
             "utilization_metrics": {
                 "personnel_in_rotation": onboard,
                 "personnel_available": total - onboard,
@@ -368,7 +401,6 @@ async def get_personnel_dashboard(db: Session = Depends(get_db)) -> dict:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get dashboard data: {str(e)}"
         )
-
 
 @router.get("/unassigned")
 async def get_unassigned_personnel(db: Session = Depends(get_db)) -> dict:
@@ -425,7 +457,6 @@ async def get_unassigned_personnel(db: Session = Depends(get_db)) -> dict:
             detail=f"Failed to fetch unassigned personnel: {str(e)}"
         )
 
-
 @router.get("/location-summary")
 async def get_current_location_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
     """
@@ -445,7 +476,6 @@ async def get_current_location_summary(db: Session = Depends(get_db)) -> Dict[st
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get location summary: {str(e)}"
         )
-
 
 @router.get("/by-location")
 async def get_personnel_by_location(
@@ -480,7 +510,6 @@ async def get_personnel_by_location(
             detail=f"Failed to get personnel by location: {str(e)}"
         )
 
-
 @router.get("/zone-capacity")
 async def get_zone_capacity_status(
     zone: Optional[str] = Query(None),
@@ -507,7 +536,6 @@ async def get_zone_capacity_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get zone capacity status: {str(e)}"
         )
-
 
 @router.get("/location-analytics")
 async def get_location_analytics(
@@ -536,7 +564,6 @@ async def get_location_analytics(
             detail=f"Failed to get location analytics: {str(e)}"
         )
 
-
 @router.get("/badge/{badge_id}", response_model=PersonnelResponse)
 async def get_personnel_by_badge(
     badge_id: str,
@@ -550,7 +577,6 @@ async def get_personnel_by_badge(
             detail="Personnel not found"
         )
     return personnel
-
 
 @router.post("", response_model=Dict[str, Any])
 async def create_personnel(
@@ -605,7 +631,6 @@ async def create_personnel(
     db.commit()
     db.refresh(person)
     return _person_to_dict(person)
-
 
 @router.put("/{personnel_id}", response_model=Dict[str, Any])
 async def update_personnel(
@@ -692,6 +717,80 @@ async def update_personnel(
     if "is_onboard" in data:
         person.is_pob = data["is_onboard"]
 
+    # Warehouse assignments.
+    #
+    # zone_personnel_assignments is what the geofence engine, the Biometrics
+    # column and the mobile app all read — current_zone_id alone governs
+    # nothing. The form sends the COMPLETE set of warehouses for this employee,
+    # so reconcile to exactly that: anything dropped is stood down, anything
+    # added is created or reactivated. Sending a set is what stops repeated
+    # edits from silently accumulating sites nobody meant to grant.
+    if "warehouse_ids" in data:
+        wanted = []
+        for z in (data.get("warehouse_ids") or []):
+            try:
+                wanted.append(int(z))
+            except (TypeError, ValueError):
+                continue
+        wanted = list(dict.fromkeys(wanted))
+
+        # Primary: keep the existing choice when it survives the edit, so an
+        # unrelated change does not quietly move somebody's main site.
+        primary = person.current_zone_id if person.current_zone_id in wanted else (
+            wanted[0] if wanted else None)
+
+        # Stand down what was removed. Kept rather than deleted: the assignment
+        # history is evidence for any attendance dispute.
+        db.execute(text("""
+            UPDATE zone_personnel_assignments
+               SET status = 'INACTIVE', unassigned_at = now(), is_primary_zone = FALSE,
+                   updated_at = now()
+             WHERE personnel_id = :pid
+               AND status = 'ACTIVE'
+               AND (:none OR zone_id <> ALL(:keep))
+        """), {"pid": person.id, "keep": wanted or [0], "none": not wanted})
+
+        for zid in wanted:
+            updated = db.execute(text("""
+                UPDATE zone_personnel_assignments
+                   SET status = 'ACTIVE', unassigned_at = NULL,
+                       is_primary_zone = :is_primary, updated_at = now()
+                 WHERE personnel_id = :pid AND zone_id = :zid
+                RETURNING id
+            """), {"pid": person.id, "zid": zid, "is_primary": zid == primary}).fetchone()
+            if not updated:
+                db.execute(text("""
+                    INSERT INTO zone_personnel_assignments
+                        (zone_id, personnel_id, is_primary_zone, status,
+                         assigned_at, created_at, updated_at)
+                    VALUES (:zid, :pid, :is_primary, 'ACTIVE', now(), now(), now())
+                """), {"pid": person.id, "zid": zid, "is_primary": zid == primary})
+
+        person.current_zone_id = primary
+        logger.info("Personnel %s assigned to warehouses %s (primary %s)",
+                    person.id, wanted, primary)
+
+    elif "current_zone_id" in data and person.current_zone_id:
+        # Only the primary was supplied (an older caller). Move the primary flag
+        # without changing which warehouses the employee may use.
+        zid = person.current_zone_id
+        db.execute(text("""
+            UPDATE zone_personnel_assignments
+               SET is_primary_zone = (zone_id = :zid), updated_at = now()
+             WHERE personnel_id = :pid AND status = 'ACTIVE'
+        """), {"pid": person.id, "zid": zid})
+        exists = db.execute(text(
+            "SELECT 1 FROM zone_personnel_assignments "
+            "WHERE personnel_id = :pid AND zone_id = :zid AND status = 'ACTIVE'"
+        ), {"pid": person.id, "zid": zid}).fetchone()
+        if not exists:
+            db.execute(text("""
+                INSERT INTO zone_personnel_assignments
+                    (zone_id, personnel_id, is_primary_zone, status,
+                     assigned_at, created_at, updated_at)
+                VALUES (:zid, :pid, TRUE, 'ACTIVE', now(), now(), now())
+            """), {"pid": person.id, "zid": zid})
+
     # Department is stored twice — department_id (the real link) and department
     # (a display name). They must never disagree: shifts hang off the ID via
     # departments.default_shift_id, while every screen shows the NAME. A caller
@@ -739,7 +838,6 @@ async def update_personnel(
             logging.getLogger(__name__).warning("Audit log for personnel %s failed: %s", person.id, e)
 
     return _person_to_dict(person)
-
 
 @router.delete("/{personnel_id}")
 async def delete_personnel(
@@ -856,9 +954,6 @@ async def delete_personnel(
             detail=f"Failed to delete personnel: {str(e)}"
         )
 
-
-
-
 @router.get("/stats/summary")
 async def get_personnel_stats(db: Session = Depends(get_db)) -> dict:
     """Get personnel statistics"""
@@ -876,8 +971,6 @@ async def get_personnel_stats(db: Session = Depends(get_db)) -> dict:
         "personnel_onboard": onboard,
         "personnel_not_onboard": total - onboard
     }
-
-
 
 @router.post("/{personnel_id}/upload-photo")
 async def upload_personnel_photo(
@@ -916,7 +1009,6 @@ async def upload_personnel_photo(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to upload photo: {str(e)}"
         )
-
 
 @router.delete("/{personnel_id}/photo")
 async def delete_personnel_photo(
@@ -958,7 +1050,6 @@ async def delete_personnel_photo(
             detail=f"Failed to delete photo: {str(e)}"
         )
 
-
 @router.post("/import/excel")
 async def import_personnel_from_excel(
     file: UploadFile = File(...),
@@ -983,7 +1074,6 @@ async def import_personnel_from_excel(
     
     result = await bulk_import_service.import_from_excel(file, db)
     return result
-
 
 @router.post("/import/csv")
 async def import_personnel_from_csv(
@@ -1010,7 +1100,6 @@ async def import_personnel_from_csv(
     result = await bulk_import_service.import_from_csv(file, db)
     return result
 
-
 @router.get("/import/template/excel")
 async def get_excel_template():
     """
@@ -1027,7 +1116,6 @@ async def get_excel_template():
         headers={"Content-Disposition": "attachment; filename=personnel_import_template.xlsx"}
     )
 
-
 @router.get("/import/template/csv")
 async def get_csv_template():
     """
@@ -1043,7 +1131,6 @@ async def get_csv_template():
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=personnel_import_template.csv"}
     )
-
 
 @router.get("/search/advanced", response_model=List[PersonnelResponse])
 async def advanced_personnel_search(
@@ -1114,7 +1201,6 @@ async def advanced_personnel_search(
     personnel = query.offset(skip).limit(limit).all()
     return personnel
 
-
 @router.get("/search/suggestions")
 async def get_search_suggestions(
     q: str = Query(..., min_length=2, description="Search query"),
@@ -1171,1466 +1257,6 @@ async def get_search_suggestions(
         "roles": role_suggestions,
         "departments": department_suggestions
     }
-
-
-@router.get("/{personnel_id}", response_model=Dict[str, Any])
-async def get_personnel_by_id(
-    personnel_id: int,
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """Get a single employee with full BioTime + POB fields"""
-    person = db.query(Personnel).filter(Personnel.id == personnel_id).first()
-    if not person:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Personnel not found")
-    return _person_to_dict(person)
-
-
-@router.post("/{personnel_id}/status")
-async def update_personnel_status(
-    personnel_id: int,
-    status: PersonnelStatus,
-    location: Optional[str] = None,
-    zone: Optional[str] = None,
-    notes: Optional[str] = None,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Update personnel status
-    
-    Args:
-        personnel_id: Personnel ID
-        status: New status
-        location: Current location (optional)
-        zone: Current zone (optional)
-        notes: Status change notes (optional)
-        db: Database session
-        
-    Returns:
-        Status update result
-    """
-    try:
-        result = await personnel_status_service.update_personnel_status(
-            personnel_id=personnel_id,
-            new_status=status,
-            location=location,
-            zone=zone,
-            notes=notes,
-            db=db
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update personnel status: {str(e)}"
-        )
-
-
-@router.post("/{personnel_id}/check-in")
-async def check_in_personnel(
-    personnel_id: int,
-    location: str,
-    zone: Optional[str] = None,
-    notes: Optional[str] = None,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Check in personnel (mark as ONBOARD)
-    
-    Args:
-        personnel_id: Personnel ID
-        location: Check-in location
-        zone: Check-in zone (optional)
-        notes: Check-in notes (optional)
-        db: Database session
-        
-    Returns:
-        Check-in result
-    """
-    try:
-        result = await personnel_status_service.check_in_personnel(
-            personnel_id=personnel_id,
-            location=location,
-            zone=zone,
-            notes=notes,
-            db=db
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to check in personnel: {str(e)}"
-        )
-
-
-@router.post("/{personnel_id}/check-out")
-async def check_out_personnel(
-    personnel_id: int,
-    location: Optional[str] = None,
-    notes: Optional[str] = None,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Check out personnel (mark as OFFBOARD)
-    
-    Args:
-        personnel_id: Personnel ID
-        location: Check-out location (optional)
-        notes: Check-out notes (optional)
-        db: Database session
-        
-    Returns:
-        Check-out result
-    """
-    try:
-        result = await personnel_status_service.check_out_personnel(
-            personnel_id=personnel_id,
-            location=location,
-            notes=notes,
-            db=db
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to check out personnel: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/status-history")
-async def get_personnel_status_history(
-    personnel_id: int,
-    limit: int = Query(50, ge=1, le=200),
-    db: Session = Depends(get_db)
-) -> List[Dict[str, Any]]:
-    """
-    Get personnel status history
-    
-    Args:
-        personnel_id: Personnel ID
-        limit: Maximum number of records to return
-        db: Database session
-        
-    Returns:
-        List of status history records
-    """
-    try:
-        history = await personnel_status_service.get_personnel_status_history(
-            personnel_id=personnel_id,
-            limit=limit,
-            db=db
-        )
-        return history
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get personnel status history: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/certifications")
-async def get_personnel_certifications(
-    personnel_id: int,
-    db: Session = Depends(get_db)
-) -> List[Dict[str, Any]]:
-    """Get personnel certifications"""
-    try:
-        personnel = db.query(Personnel).filter(Personnel.id == personnel_id).first()
-        if not personnel:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Personnel not found"
-            )
-        
-        # Extract certifications from JSONB field
-        certifications = personnel.certifications or []
-        
-        # Format certifications for frontend
-        formatted_certs = []
-        for cert in certifications:
-            formatted_certs.append({
-                "id": cert.get("id"),
-                "name": cert.get("name", "Unknown Certification"),
-                "number": cert.get("number", ""),
-                "issuer": cert.get("issuer", ""),
-                "issue_date": cert.get("issue_date"),
-                "expiry_date": cert.get("expiry_date"),
-                "status": cert.get("status", "unknown"),
-                "certificate_url": cert.get("certificate_url"),
-                "verification_status": cert.get("verification_status", "pending")
-            })
-        
-        return formatted_certs
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get certifications: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/emergency-contacts")
-async def get_personnel_emergency_contacts(
-    personnel_id: int,
-    db: Session = Depends(get_db)
-) -> List[Dict[str, Any]]:
-    """Get personnel emergency contacts"""
-    try:
-        personnel = db.query(Personnel).filter(Personnel.id == personnel_id).first()
-        if not personnel:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Personnel not found"
-            )
-        
-        # Extract emergency contacts from JSONB field
-        emergency_contacts = personnel.emergency_contact or []
-        
-        # Handle both single contact and array of contacts
-        if isinstance(emergency_contacts, dict):
-            emergency_contacts = [emergency_contacts]
-        
-        # Format emergency contacts for frontend
-        formatted_contacts = []
-        for contact in emergency_contacts:
-            formatted_contacts.append({
-                "id": contact.get("id"),
-                "full_name": contact.get("full_name", ""),
-                "relationship": contact.get("relationship", ""),
-                "phone": contact.get("phone", ""),
-                "mobile": contact.get("mobile", ""),
-                "email": contact.get("email", ""),
-                "is_primary": contact.get("is_primary", False),
-                "address": contact.get("address", ""),
-                "city": contact.get("city", ""),
-                "state": contact.get("state", ""),
-                "postal_code": contact.get("postal_code", "")
-            })
-        
-        return formatted_contacts
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get emergency contacts: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/activity")
-async def get_personnel_activity(
-    personnel_id: int,
-    limit: int = Query(50, ge=1, le=200),
-    db: Session = Depends(get_db)
-) -> List[Dict[str, Any]]:
-    """Get personnel recent activity"""
-    try:
-        personnel = db.query(Personnel).filter(Personnel.id == personnel_id).first()
-        if not personnel:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Personnel not found"
-            )
-        
-        # Get attendance logs for this personnel
-        attendance_logs = db.query(AttendanceLog).filter(
-            AttendanceLog.personnel_id == personnel_id
-        ).order_by(AttendanceLog.timestamp.desc()).limit(limit).all()
-        
-        # Format activity for frontend
-        activities = []
-        for log in attendance_logs:
-            activities.append({
-                "id": log.id,
-                "type": log.event_type.lower(),
-                "title": f"{log.event_type.replace('_', ' ').title()}",
-                "description": f"Personnel {log.event_type.replace('_', ' ')} at {log.location or 'Unknown Location'}",
-                "location": log.location,
-                "timestamp": log.timestamp.isoformat(),
-                "device_id": log.device_id,
-                "verification_method": log.verification_method
-            })
-        
-        return activities
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get personnel activity: {str(e)}"
-        )
-
-
-@router.post("/{personnel_id}/emergency-contacts")
-async def add_personnel_emergency_contact(
-    personnel_id: int,
-    contact_data: Dict[str, Any],
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """Add emergency contact for personnel"""
-    try:
-        personnel = db.query(Personnel).filter(Personnel.id == personnel_id).first()
-        if not personnel:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Personnel not found"
-            )
-        
-        # Get existing contacts
-        existing_contacts = personnel.emergency_contact or []
-        if isinstance(existing_contacts, dict):
-            existing_contacts = [existing_contacts]
-        
-        # Add new contact
-        new_contact = {
-            "id": len(existing_contacts) + 1,
-            "full_name": contact_data.get("full_name"),
-            "relationship": contact_data.get("relationship"),
-            "phone": contact_data.get("phone"),
-            "mobile": contact_data.get("mobile"),
-            "email": contact_data.get("email"),
-            "is_primary": contact_data.get("is_primary", False),
-            "address": contact_data.get("address"),
-            "city": contact_data.get("city"),
-            "state": contact_data.get("state"),
-            "postal_code": contact_data.get("postal_code"),
-            "created_at": datetime.utcnow().isoformat()
-        }
-        
-        existing_contacts.append(new_contact)
-        personnel.emergency_contact = existing_contacts
-        
-        db.commit()
-        
-        return {
-            "success": True,
-            "message": "Emergency contact added successfully",
-            "contact": new_contact
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to add emergency contact: {str(e)}"
-        )
-
-
-@router.post("/{personnel_id}/certifications")
-async def add_personnel_certification(
-    personnel_id: int,
-    certification_data: Dict[str, Any],
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Add certification to personnel record
-    
-    Args:
-        personnel_id: Personnel ID
-        certification_data: Certification details
-        db: Database session
-        
-    Returns:
-        Added certification information
-    """
-    try:
-        result = await certification_training_service.add_personnel_certification(
-            personnel_id=personnel_id,
-            certification_data=certification_data,
-            db=db
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to add certification: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/certifications")
-async def get_personnel_certifications(
-    personnel_id: int,
-    status: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
-) -> List[Dict[str, Any]]:
-    """
-    Get personnel certifications
-    
-    Args:
-        personnel_id: Personnel ID
-        status: Filter by status (optional)
-        db: Database session
-        
-    Returns:
-        List of certifications
-    """
-    try:
-        certifications = await certification_training_service.get_personnel_certifications(
-            personnel_id=personnel_id,
-            status=status,
-            db=db
-        )
-        return certifications
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get certifications: {str(e)}"
-        )
-
-
-@router.get("/certifications/compliance-report")
-async def get_certification_compliance_report(db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """
-    Get certification compliance report
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        Compliance report statistics
-    """
-    try:
-        report = await certification_training_service.get_certification_compliance_report(db=db)
-        return report
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get compliance report: {str(e)}"
-        )
-
-
-@router.post("/{personnel_id}/location")
-async def update_personnel_location(
-    personnel_id: int,
-    location: str,
-    zone: Optional[str] = None,
-    coordinates: Optional[Dict[str, float]] = None,
-    source: str = "MANUAL",
-    notes: Optional[str] = None,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Update personnel location in real-time
-    
-    Args:
-        personnel_id: Personnel ID
-        location: Current location
-        zone: Current zone (optional)
-        coordinates: GPS coordinates (optional)
-        source: Location source (MANUAL, BIOMETRIC, RFID, GPS)
-        notes: Location update notes (optional)
-        db: Database session
-        
-    Returns:
-        Location update result
-    """
-    try:
-        result = await zone_service.update_personnel_location(
-            personnel_id=personnel_id,
-            location=location,
-            zone=zone,
-            coordinates=coordinates,
-            source=source,
-            notes=notes,
-            db=db
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update personnel location: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/location-history")
-async def get_personnel_location_history(
-    personnel_id: int,
-    hours: int = Query(24, ge=1, le=168),
-    db: Session = Depends(get_db)
-) -> List[Dict[str, Any]]:
-    """
-    Get personnel location history
-    
-    Args:
-        personnel_id: Personnel ID
-        hours: Number of hours of history to retrieve
-        db: Database session
-        
-    Returns:
-        List of location history records
-    """
-    try:
-        history = await zone_service.get_personnel_location_history(
-            personnel_id=personnel_id,
-            hours=hours,
-            db=db
-        )
-        return history
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get location history: {str(e)}"
-        )
-
-
-@router.post("/{personnel_id}/emergency-contacts")
-async def add_emergency_contact(
-    personnel_id: int,
-    contact_data: Dict[str, Any],
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Add emergency contact to personnel record
-    
-    Args:
-        personnel_id: Personnel ID
-        contact_data: Contact details
-        db: Database session
-        
-    Returns:
-        Added contact information
-    """
-    try:
-        result = await emergency_contact_service.add_emergency_contact(
-            personnel_id=personnel_id,
-            contact_data=contact_data,
-            db=db
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to add emergency contact: {str(e)}"
-        )
-
-
-@router.post("/{personnel_id}/medical-fitness")
-async def create_medical_fitness_record(
-    personnel_id: int,
-    fitness_data: Dict[str, Any],
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Create medical fitness record for personnel
-    
-    Args:
-        personnel_id: Personnel ID
-        fitness_data: Fitness assessment details
-        db: Database session
-        
-    Returns:
-        Created fitness record information
-    """
-    try:
-        result = await medical_fitness_service.create_medical_fitness_record(
-            personnel_id=personnel_id,
-            fitness_data=fitness_data,
-            db=db
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create medical fitness record: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/medical-fitness")
-async def get_personnel_fitness_records(
-    personnel_id: int,
-    assessment_type: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
-) -> List[Dict[str, Any]]:
-    """
-    Get personnel medical fitness records
-    
-    Args:
-        personnel_id: Personnel ID
-        assessment_type: Filter by assessment type (optional)
-        status: Filter by fitness status (optional)
-        db: Database session
-        
-    Returns:
-        List of fitness records
-    """
-    try:
-        records = await medical_fitness_service.get_personnel_fitness_records(
-            personnel_id=personnel_id,
-            assessment_type=assessment_type,
-            status=status,
-            db=db
-        )
-        return records
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get fitness records: {str(e)}"
-        )
-
-
-@router.put("/{personnel_id}/medical-fitness/{fitness_record_id}/status")
-async def update_fitness_status(
-    personnel_id: int,
-    fitness_record_id: str,
-    fitness_status: str,
-    notes: Optional[str] = None,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Update fitness status
-    
-    Args:
-        personnel_id: Personnel ID
-        fitness_record_id: Fitness record ID
-        fitness_status: New fitness status
-        notes: Update notes (optional)
-        db: Database session
-        
-    Returns:
-        Update result
-    """
-    try:
-        result = await medical_fitness_service.update_fitness_status(
-            personnel_id=personnel_id,
-            fitness_record_id=fitness_record_id,
-            fitness_status=fitness_status,
-            notes=notes,
-            db=db
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update fitness status: {str(e)}"
-        )
-
-
-@router.post("/{personnel_id}/medical-alerts")
-async def create_medical_alert(
-    personnel_id: int,
-    alert_type: str,
-    message: str,
-    severity: str = "MEDIUM",
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Create medical alert for personnel
-    
-    Args:
-        personnel_id: Personnel ID
-        alert_type: Alert type
-        message: Alert message
-        severity: Alert severity (LOW, MEDIUM, HIGH, CRITICAL)
-        db: Database session
-        
-    Returns:
-        Alert creation result
-    """
-    try:
-        alert = await medical_fitness_service.create_medical_alert(
-            personnel_id=personnel_id,
-            alert_type=alert_type,
-            message=message,
-            severity=severity,
-            db=db
-        )
-        return alert
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create medical alert: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/medical-alerts")
-async def get_medical_alerts(
-    personnel_id: int,
-    severity: Optional[str] = Query(None),
-    resolved: Optional[bool] = Query(None),
-    db: Session = Depends(get_db)
-) -> List[Dict[str, Any]]:
-    """
-    Get medical alerts
-    
-    Args:
-        personnel_id: Filter by personnel ID (optional)
-        severity: Filter by severity (optional)
-        resolved: Filter by resolved status (optional)
-        db: Database session
-        
-    Returns:
-        List of medical alerts
-    """
-    try:
-        alerts = await medical_fitness_service.get_medical_alerts(
-            personnel_id=personnel_id,
-            severity=severity,
-            resolved=resolved,
-            db=db
-        )
-        return alerts
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get medical alerts: {str(e)}"
-        )
-
-
-@router.get("/medical-fitness/expiring")
-async def get_fitness_expiry_alerts(
-    days_ahead: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db)
-) -> List[Dict[str, Any]]:
-    """
-    Get fitness records expiring within specified days
-    
-    Args:
-        days_ahead: Number of days ahead to check
-        db: Database session
-        
-    Returns:
-        List of expiring fitness records
-    """
-    try:
-        expiring_records = await medical_fitness_service.get_fitness_expiry_alerts(
-            days_ahead=days_ahead,
-            db=db
-        )
-        return expiring_records
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get expiring fitness records: {str(e)}"
-        )
-
-
-@router.get("/medical-fitness/compliance-report")
-async def get_fitness_compliance_report(db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """
-    Get medical fitness compliance report
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        Fitness compliance statistics
-    """
-    try:
-        report = await medical_fitness_service.get_fitness_compliance_report(db=db)
-        return report
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get fitness compliance report: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/medical-summary")
-async def get_medical_summary(
-    personnel_id: int,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Get comprehensive medical summary for personnel
-    
-    Args:
-        personnel_id: Personnel ID
-        db: Database session
-        
-    Returns:
-        Medical summary
-    """
-    try:
-        summary = await medical_fitness_service.get_medical_summary(
-            personnel_id=personnel_id,
-            db=db
-        )
-        return summary
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get medical summary: {str(e)}"
-        )
-
-
-@router.post("/{personnel_id}/badges")
-async def create_badge_record(
-    personnel_id: int,
-    badge_data: Dict[str, Any],
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Create badge record for personnel
-    
-    Args:
-        personnel_id: Personnel ID
-        badge_data: Badge details
-        db: Database session
-        
-    Returns:
-        Created badge record information
-    """
-    try:
-        result = await badge_printing_service.create_badge_record(
-            personnel_id=personnel_id,
-            badge_data=badge_data,
-            db=db
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create badge record: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/badges")
-async def get_personnel_badges(
-    personnel_id: int,
-    badge_type: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
-) -> List[Dict[str, Any]]:
-    """
-    Get personnel badge records
-    
-    Args:
-        personnel_id: Personnel ID
-        badge_type: Filter by badge type (optional)
-        status: Filter by printing status (optional)
-        db: Database session
-        
-    Returns:
-        List of badge records
-    """
-    try:
-        badges = await badge_printing_service.get_personnel_badges(
-            personnel_id=personnel_id,
-            badge_type=badge_type,
-            status=status,
-            db=db
-        )
-        return badges
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get badge records: {str(e)}"
-        )
-
-
-@router.put("/{personnel_id}/badges/{badge_record_id}/print-status")
-async def update_badge_printing_status(
-    personnel_id: int,
-    badge_record_id: str,
-    printing_status: str,
-    printer_used: Optional[str] = None,
-    notes: Optional[str] = None,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Update badge printing status
-    
-    Args:
-        personnel_id: Personnel ID
-        badge_record_id: Badge record ID
-        printing_status: New printing status
-        printer_used: Printer used (optional)
-        notes: Update notes (optional)
-        db: Database session
-        
-    Returns:
-        Update result
-    """
-    try:
-        result = await badge_printing_service.update_badge_printing_status(
-            personnel_id=personnel_id,
-            badge_record_id=badge_record_id,
-            printing_status=printing_status,
-            printer_used=printer_used,
-            notes=notes,
-            db=db
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update badge printing status: {str(e)}"
-        )
-
-
-@router.get("/badges/printing-summary")
-async def get_badge_printing_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """
-    Get badge printing summary statistics
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        Badge printing summary
-    """
-    try:
-        summary = await badge_printing_service.get_badge_printing_summary(db=db)
-        return summary
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get badge printing summary: {str(e)}"
-        )
-
-
-@router.post("/badges/batch")
-async def create_badge_printing_batch(
-    personnel_ids: List[int],
-    badge_data: Dict[str, Any],
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Create badge records for multiple personnel (batch operation)
-    
-    Args:
-        personnel_ids: List of personnel IDs
-        badge_data: Common badge data
-        db: Database session
-        
-    Returns:
-        Batch creation result
-    """
-    try:
-        result = await badge_printing_service.create_badge_printing_batch(
-            personnel_ids=personnel_ids,
-            badge_data=badge_data,
-            db=db
-        )
-        return result
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create badge batch: {str(e)}"
-        )
-
-
-@router.get("/badges/expiring")
-async def get_badge_expiry_alerts(
-    days_ahead: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db)
-) -> List[Dict[str, Any]]:
-    """
-    Get badges expiring within specified days
-    
-    Args:
-        days_ahead: Number of days ahead to check
-        db: Database session
-        
-    Returns:
-        List of expiring badges
-    """
-    try:
-        expiring_badges = await badge_printing_service.get_badge_expiry_alerts(
-            days_ahead=days_ahead,
-            db=db
-        )
-        return expiring_badges
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get expiring badges: {str(e)}"
-        )
-
-
-@router.post("/badges/template")
-async def generate_badge_template(
-    badge_type: str,
-    access_level: str,
-    template_data: Dict[str, Any],
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Generate badge template for printing
-    
-    Args:
-        badge_type: Badge type
-        access_level: Access level
-        template_data: Template configuration data
-        db: Database session
-        
-    Returns:
-        Badge template configuration
-    """
-    try:
-        template = await badge_printing_service.generate_badge_template(
-            badge_type=badge_type,
-            access_level=access_level,
-            template_data=template_data
-        )
-        return template
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate badge template: {str(e)}"
-        )
-
-
-@router.post("/{personnel_id}/audit-trail")
-async def create_audit_entry(
-    personnel_id: int,
-    event_type: str,
-    description: str,
-    old_values: Optional[Dict[str, Any]] = None,
-    new_values: Optional[Dict[str, Any]] = None,
-    severity: str = "LOW",
-    user_id: Optional[int] = None,
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Create audit entry for personnel
-    
-    Args:
-        personnel_id: Personnel ID
-        event_type: Type of event
-        description: Event description
-        old_values: Previous values (optional)
-        new_values: New values (optional)
-        severity: Event severity level
-        user_id: User who performed the action (optional)
-        ip_address: IP address of the action (optional)
-        user_agent: User agent string (optional)
-        db: Database session
-        
-    Returns:
-        Created audit entry
-    """
-    try:
-        result = await audit_trail_service.create_audit_entry(
-            personnel_id=personnel_id,
-            event_type=event_type,
-            description=description,
-            old_values=old_values,
-            new_values=new_values,
-            severity=severity,
-            user_id=user_id,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            db=db
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create audit entry: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/audit-trail")
-async def get_personnel_audit_trail(
-    personnel_id: int,
-    event_type: Optional[str] = Query(None),
-    severity: Optional[str] = Query(None),
-    start_date: Optional[datetime] = Query(None),
-    end_date: Optional[datetime] = Query(None),
-    limit: int = Query(100, ge=1, le=1000),
-    db: Session = Depends(get_db)
-) -> List[Dict[str, Any]]:
-    """
-    Get personnel audit trail
-    
-    Args:
-        personnel_id: Personnel ID
-        event_type: Filter by event type (optional)
-        severity: Filter by severity (optional)
-        start_date: Filter by start date (optional)
-        end_date: Filter by end date (optional)
-        limit: Maximum number of records to return
-        db: Database session
-        
-    Returns:
-        List of audit entries
-    """
-    try:
-        audit_trail = await audit_trail_service.get_personnel_audit_trail(
-            personnel_id=personnel_id,
-            event_type=event_type,
-            severity=severity,
-            start_date=start_date,
-            end_date=end_date,
-            limit=limit,
-            db=db
-        )
-        return audit_trail
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get audit trail: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/audit-summary")
-async def get_audit_summary(
-    personnel_id: int,
-    days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Get audit summary for personnel
-    
-    Args:
-        personnel_id: Personnel ID
-        days: Number of days to analyze
-        db: Database session
-        
-    Returns:
-        Audit summary statistics
-    """
-    try:
-        summary = await audit_trail_service.get_audit_summary(
-            personnel_id=personnel_id,
-            days=days,
-            db=db
-        )
-        return summary
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get audit summary: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/compliance-report")
-async def get_compliance_report(
-    personnel_id: int,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Get compliance report for personnel
-    
-    Args:
-        personnel_id: Personnel ID
-        db: Database session
-        
-    Returns:
-        Compliance report
-    """
-    try:
-        report = await audit_trail_service.get_compliance_report(
-            personnel_id=personnel_id,
-            db=db
-        )
-        return report
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get compliance report: {str(e)}"
-        )
-
-
-@router.get("/audit/system-report")
-async def get_system_audit_report(
-    days: int = Query(30, ge=1, le=365),
-    event_type: Optional[str] = Query(None),
-    severity: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Get system-wide audit report
-    
-    Args:
-        days: Number of days to analyze
-        event_type: Filter by event type (optional)
-        severity: Filter by severity (optional)
-        db: Database session
-        
-    Returns:
-        System audit report
-    """
-    try:
-        report = await audit_trail_service.get_system_audit_report(
-            days=days,
-            event_type=event_type,
-            severity=severity,
-            db=db
-        )
-        return report
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get system audit report: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/audit-export")
-async def export_audit_trail(
-    personnel_id: int,
-    format_type: str = Query("json", pattern="^(json|csv)$"),
-    start_date: Optional[datetime] = Query(None),
-    end_date: Optional[datetime] = Query(None),
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Export audit trail for personnel
-    
-    Args:
-        personnel_id: Personnel ID
-        format_type: Export format (json, csv)
-        start_date: Filter by start date (optional)
-        end_date: Filter by end date (optional)
-        db: Database session
-        
-    Returns:
-        Export result
-    """
-    try:
-        export_result = await audit_trail_service.export_audit_trail(
-            personnel_id=personnel_id,
-            format_type=format_type,
-            start_date=start_date,
-            end_date=end_date,
-            db=db
-        )
-        return export_result
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to export audit trail: {str(e)}"
-        )
-
-
-@router.get("/analytics/overview")
-async def get_personnel_overview(db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """
-    Get comprehensive personnel overview analytics
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        Personnel overview analytics
-    """
-    try:
-        overview = await personnel_analytics_service.get_personnel_overview(db=db)
-        return overview
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get personnel overview: {str(e)}"
-        )
-
-
-@router.get("/analytics/attendance")
-async def get_attendance_analytics(
-    days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Get attendance analytics and patterns
-    
-    Args:
-        days: Number of days to analyze
-        db: Database session
-        
-    Returns:
-        Attendance analytics data
-    """
-    try:
-        analytics = await personnel_analytics_service.get_attendance_analytics(days=days, db=db)
-        return analytics
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get attendance analytics: {str(e)}"
-        )
-
-
-@router.get("/analytics/location")
-async def get_location_analytics(
-    days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Get location analytics and movement patterns
-    
-    Args:
-        days: Number of days to analyze
-        db: Database session
-        
-    Returns:
-        Location analytics data
-    """
-    try:
-        analytics = await personnel_analytics_service.get_location_analytics(days=days, db=db)
-        return analytics
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get location analytics: {str(e)}"
-        )
-
-
-@router.get("/analytics/certifications")
-async def get_certification_analytics(db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """
-    Get certification compliance analytics
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        Certification analytics data
-    """
-    try:
-        analytics = await personnel_analytics_service.get_certification_analytics(db=db)
-        return analytics
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get certification analytics: {str(e)}"
-        )
-
-
-@router.get("/analytics/medical-fitness")
-async def get_medical_fitness_analytics(db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """
-    Get medical fitness analytics
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        Medical fitness analytics data
-    """
-    try:
-        analytics = await personnel_analytics_service.get_medical_fitness_analytics(db=db)
-        return analytics
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get medical fitness analytics: {str(e)}"
-        )
-
-
-@router.get("/analytics/performance-metrics")
-async def get_performance_metrics(
-    days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Get comprehensive performance metrics
-    
-    Args:
-        days: Number of days to analyze
-        db: Database session
-        
-    Returns:
-        Performance metrics dashboard
-    """
-    try:
-        metrics = await personnel_analytics_service.get_performance_metrics(days=days, db=db)
-        return metrics
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get performance metrics: {str(e)}"
-        )
-
 
 @router.get("/dashboard")
 async def get_dashboard_data(db: Session = Depends(get_db)) -> Dict[str, Any]:
@@ -2736,6 +1362,10 @@ async def get_dashboard_data(db: Session = Depends(get_db)) -> Dict[str, Any]:
             
             # Zone and company distribution (zones-only architecture)
             "zone_distribution": zone_distribution,
+            "warehouse_assignment": {
+                "assigned": assigned_count,
+                "unassigned": max(0, active_total - assigned_count),
+            },
             "company_distribution": company_distribution,
             
             # Recent activity
@@ -2763,24 +1393,196 @@ async def get_dashboard_data(db: Session = Depends(get_db)) -> Dict[str, Any]:
             detail=f"Failed to get dashboard data: {str(e)}"
         )
 
-
-@router.post("/{personnel_id}/biometric-enroll")
-async def enroll_biometric(
+@router.get("/{personnel_id}", response_model=Dict[str, Any])
+async def get_personnel_by_id(
     personnel_id: int,
-    biometric_data: Dict[str, Any],
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Get a single employee with full BioTime + POB fields"""
+    person = db.query(Personnel).filter(Personnel.id == personnel_id).first()
+    if not person:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Personnel not found")
+    return _person_to_dict(person)
+
+@router.post("/{personnel_id}/status")
+async def update_personnel_status(
+    personnel_id: int,
+    status: PersonnelStatus,
+    location: Optional[str] = None,
+    zone: Optional[str] = None,
+    notes: Optional[str] = None,
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """
-    Enroll personnel in biometric system
+    Update personnel status
     
     Args:
         personnel_id: Personnel ID
-        biometric_data: Biometric enrollment data
+        status: New status
+        location: Current location (optional)
+        zone: Current zone (optional)
+        notes: Status change notes (optional)
         db: Database session
         
     Returns:
-        Enrollment result
+        Status update result
     """
+    try:
+        result = await personnel_status_service.update_personnel_status(
+            personnel_id=personnel_id,
+            new_status=status,
+            location=location,
+            zone=zone,
+            notes=notes,
+            db=db
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update personnel status: {str(e)}"
+        )
+
+@router.post("/{personnel_id}/check-in")
+async def check_in_personnel(
+    personnel_id: int,
+    location: str,
+    zone: Optional[str] = None,
+    notes: Optional[str] = None,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Check in personnel (mark as ONBOARD)
+    
+    Args:
+        personnel_id: Personnel ID
+        location: Check-in location
+        zone: Check-in zone (optional)
+        notes: Check-in notes (optional)
+        db: Database session
+        
+    Returns:
+        Check-in result
+    """
+    try:
+        result = await personnel_status_service.check_in_personnel(
+            personnel_id=personnel_id,
+            location=location,
+            zone=zone,
+            notes=notes,
+            db=db
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check in personnel: {str(e)}"
+        )
+
+@router.post("/{personnel_id}/check-out")
+async def check_out_personnel(
+    personnel_id: int,
+    location: Optional[str] = None,
+    notes: Optional[str] = None,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Check out personnel (mark as OFFBOARD)
+    
+    Args:
+        personnel_id: Personnel ID
+        location: Check-out location (optional)
+        notes: Check-out notes (optional)
+        db: Database session
+        
+    Returns:
+        Check-out result
+    """
+    try:
+        result = await personnel_status_service.check_out_personnel(
+            personnel_id=personnel_id,
+            location=location,
+            notes=notes,
+            db=db
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check out personnel: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/status-history")
+async def get_personnel_status_history(
+    personnel_id: int,
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """
+    Get personnel status history
+    
+    Args:
+        personnel_id: Personnel ID
+        limit: Maximum number of records to return
+        db: Database session
+        
+    Returns:
+        List of status history records
+    """
+    try:
+        history = await personnel_status_service.get_personnel_status_history(
+            personnel_id=personnel_id,
+            limit=limit,
+            db=db
+        )
+        return history
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get personnel status history: {str(e)}"
+        )
+
+@router.get("/analytics/certifications")
+async def get_certification_analytics(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """
+    Get certification compliance analytics
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        Certification analytics data
+    """
+    try:
+        analytics = await personnel_analytics_service.get_certification_analytics(db=db)
+        return analytics
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get certification analytics: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/certifications")
+async def get_personnel_certifications(
+    personnel_id: int,
+    db: Session = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """Get personnel certifications"""
     try:
         personnel = db.query(Personnel).filter(Personnel.id == personnel_id).first()
         if not personnel:
@@ -2789,30 +1591,1224 @@ async def enroll_biometric(
                 detail="Personnel not found"
             )
         
-        # Update biometric enrollment status
-        personnel.biometric_enrolled = True
-        personnel.biometric_data = biometric_data
+        # Extract certifications from JSONB field
+        certifications = personnel.certifications or []
         
-        # Calculate compliance score based on biometric enrollment
-        if personnel.compliance_score < 70:
-            personnel.compliance_score = min(100, personnel.compliance_score + 20)
+        # Format certifications for frontend
+        formatted_certs = []
+        for cert in certifications:
+            formatted_certs.append({
+                "id": cert.get("id"),
+                "name": cert.get("name", "Unknown Certification"),
+                "number": cert.get("number", ""),
+                "issuer": cert.get("issuer", ""),
+                "issue_date": cert.get("issue_date"),
+                "expiry_date": cert.get("expiry_date"),
+                "status": cert.get("status", "unknown"),
+                "certificate_url": cert.get("certificate_url"),
+                "verification_status": cert.get("verification_status", "pending")
+            })
+        
+        return formatted_certs
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get certifications: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/emergency-contacts")
+async def get_personnel_emergency_contacts(
+    personnel_id: int,
+    db: Session = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """Get personnel emergency contacts"""
+    try:
+        personnel = db.query(Personnel).filter(Personnel.id == personnel_id).first()
+        if not personnel:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Personnel not found"
+            )
+        
+        # Extract emergency contacts from JSONB field
+        emergency_contacts = personnel.emergency_contact or []
+        
+        # Handle both single contact and array of contacts
+        if isinstance(emergency_contacts, dict):
+            emergency_contacts = [emergency_contacts]
+        
+        # Format emergency contacts for frontend
+        formatted_contacts = []
+        for contact in emergency_contacts:
+            formatted_contacts.append({
+                "id": contact.get("id"),
+                "full_name": contact.get("full_name", ""),
+                "relationship": contact.get("relationship", ""),
+                "phone": contact.get("phone", ""),
+                "mobile": contact.get("mobile", ""),
+                "email": contact.get("email", ""),
+                "is_primary": contact.get("is_primary", False),
+                "address": contact.get("address", ""),
+                "city": contact.get("city", ""),
+                "state": contact.get("state", ""),
+                "postal_code": contact.get("postal_code", "")
+            })
+        
+        return formatted_contacts
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get emergency contacts: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/activity")
+async def get_personnel_activity(
+    personnel_id: int,
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """Get personnel recent activity"""
+    try:
+        personnel = db.query(Personnel).filter(Personnel.id == personnel_id).first()
+        if not personnel:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Personnel not found"
+            )
+        
+        # Get attendance logs for this personnel
+        attendance_logs = db.query(AttendanceLog).filter(
+            AttendanceLog.personnel_id == personnel_id
+        ).order_by(AttendanceLog.timestamp.desc()).limit(limit).all()
+        
+        # Format activity for frontend
+        activities = []
+        for log in attendance_logs:
+            activities.append({
+                "id": log.id,
+                "type": log.event_type.lower(),
+                "title": f"{log.event_type.replace('_', ' ').title()}",
+                "description": f"Personnel {log.event_type.replace('_', ' ')} at {log.location or 'Unknown Location'}",
+                "location": log.location,
+                "timestamp": log.timestamp.isoformat(),
+                "device_id": log.device_id,
+                "verification_method": log.verification_method
+            })
+        
+        return activities
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get personnel activity: {str(e)}"
+        )
+
+@router.post("/{personnel_id}/emergency-contacts")
+async def add_personnel_emergency_contact(
+    personnel_id: int,
+    contact_data: Dict[str, Any],
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """Add emergency contact for personnel"""
+    try:
+        personnel = db.query(Personnel).filter(Personnel.id == personnel_id).first()
+        if not personnel:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Personnel not found"
+            )
+        
+        # Get existing contacts
+        existing_contacts = personnel.emergency_contact or []
+        if isinstance(existing_contacts, dict):
+            existing_contacts = [existing_contacts]
+        
+        # Add new contact
+        new_contact = {
+            "id": len(existing_contacts) + 1,
+            "full_name": contact_data.get("full_name"),
+            "relationship": contact_data.get("relationship"),
+            "phone": contact_data.get("phone"),
+            "mobile": contact_data.get("mobile"),
+            "email": contact_data.get("email"),
+            "is_primary": contact_data.get("is_primary", False),
+            "address": contact_data.get("address"),
+            "city": contact_data.get("city"),
+            "state": contact_data.get("state"),
+            "postal_code": contact_data.get("postal_code"),
+            "created_at": datetime.utcnow().isoformat()
+        }
+        
+        existing_contacts.append(new_contact)
+        personnel.emergency_contact = existing_contacts
         
         db.commit()
         
         return {
             "success": True,
-            "message": "Biometric enrollment successful",
-            "personnel_id": personnel_id,
-            "enrolled_at": datetime.utcnow().isoformat()
+            "message": "Emergency contact added successfully",
+            "contact": new_contact
         }
-        
     except Exception as e:
-        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to enroll biometric: {str(e)}"
+            detail=f"Failed to add emergency contact: {str(e)}"
         )
 
+@router.post("/{personnel_id}/certifications")
+async def add_personnel_certification(
+    personnel_id: int,
+    certification_data: Dict[str, Any],
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Add certification to personnel record
+    
+    Args:
+        personnel_id: Personnel ID
+        certification_data: Certification details
+        db: Database session
+        
+    Returns:
+        Added certification information
+    """
+    try:
+        result = await certification_training_service.add_personnel_certification(
+            personnel_id=personnel_id,
+            certification_data=certification_data,
+            db=db
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to add certification: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/certifications")
+async def get_personnel_certifications(
+    personnel_id: int,
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """
+    Get personnel certifications
+    
+    Args:
+        personnel_id: Personnel ID
+        status: Filter by status (optional)
+        db: Database session
+        
+    Returns:
+        List of certifications
+    """
+    try:
+        certifications = await certification_training_service.get_personnel_certifications(
+            personnel_id=personnel_id,
+            status=status,
+            db=db
+        )
+        return certifications
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get certifications: {str(e)}"
+        )
+
+@router.get("/certifications/compliance-report")
+async def get_certification_compliance_report(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """
+    Get certification compliance report
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        Compliance report statistics
+    """
+    try:
+        report = await certification_training_service.get_certification_compliance_report(db=db)
+        return report
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get compliance report: {str(e)}"
+        )
+
+@router.post("/{personnel_id}/location")
+async def update_personnel_location(
+    personnel_id: int,
+    location: str,
+    zone: Optional[str] = None,
+    coordinates: Optional[Dict[str, float]] = None,
+    source: str = "MANUAL",
+    notes: Optional[str] = None,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Update personnel location in real-time
+    
+    Args:
+        personnel_id: Personnel ID
+        location: Current location
+        zone: Current zone (optional)
+        coordinates: GPS coordinates (optional)
+        source: Location source (MANUAL, BIOMETRIC, RFID, GPS)
+        notes: Location update notes (optional)
+        db: Database session
+        
+    Returns:
+        Location update result
+    """
+    try:
+        result = await zone_service.update_personnel_location(
+            personnel_id=personnel_id,
+            location=location,
+            zone=zone,
+            coordinates=coordinates,
+            source=source,
+            notes=notes,
+            db=db
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update personnel location: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/location-history")
+async def get_personnel_location_history(
+    personnel_id: int,
+    hours: int = Query(24, ge=1, le=168),
+    db: Session = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """
+    Get personnel location history
+    
+    Args:
+        personnel_id: Personnel ID
+        hours: Number of hours of history to retrieve
+        db: Database session
+        
+    Returns:
+        List of location history records
+    """
+    try:
+        history = await zone_service.get_personnel_location_history(
+            personnel_id=personnel_id,
+            hours=hours,
+            db=db
+        )
+        return history
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get location history: {str(e)}"
+        )
+
+@router.post("/{personnel_id}/emergency-contacts")
+async def add_emergency_contact(
+    personnel_id: int,
+    contact_data: Dict[str, Any],
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Add emergency contact to personnel record
+    
+    Args:
+        personnel_id: Personnel ID
+        contact_data: Contact details
+        db: Database session
+        
+    Returns:
+        Added contact information
+    """
+    try:
+        result = await emergency_contact_service.add_emergency_contact(
+            personnel_id=personnel_id,
+            contact_data=contact_data,
+            db=db
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to add emergency contact: {str(e)}"
+        )
+
+@router.post("/{personnel_id}/medical-fitness")
+async def create_medical_fitness_record(
+    personnel_id: int,
+    fitness_data: Dict[str, Any],
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Create medical fitness record for personnel
+    
+    Args:
+        personnel_id: Personnel ID
+        fitness_data: Fitness assessment details
+        db: Database session
+        
+    Returns:
+        Created fitness record information
+    """
+    try:
+        result = await medical_fitness_service.create_medical_fitness_record(
+            personnel_id=personnel_id,
+            fitness_data=fitness_data,
+            db=db
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create medical fitness record: {str(e)}"
+        )
+
+@router.get("/analytics/medical-fitness")
+async def get_medical_fitness_analytics(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """
+    Get medical fitness analytics
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        Medical fitness analytics data
+    """
+    try:
+        analytics = await personnel_analytics_service.get_medical_fitness_analytics(db=db)
+        return analytics
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get medical fitness analytics: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/medical-fitness")
+async def get_personnel_fitness_records(
+    personnel_id: int,
+    assessment_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """
+    Get personnel medical fitness records
+    
+    Args:
+        personnel_id: Personnel ID
+        assessment_type: Filter by assessment type (optional)
+        status: Filter by fitness status (optional)
+        db: Database session
+        
+    Returns:
+        List of fitness records
+    """
+    try:
+        records = await medical_fitness_service.get_personnel_fitness_records(
+            personnel_id=personnel_id,
+            assessment_type=assessment_type,
+            status=status,
+            db=db
+        )
+        return records
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get fitness records: {str(e)}"
+        )
+
+@router.put("/{personnel_id}/medical-fitness/{fitness_record_id}/status")
+async def update_fitness_status(
+    personnel_id: int,
+    fitness_record_id: str,
+    fitness_status: str,
+    notes: Optional[str] = None,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Update fitness status
+    
+    Args:
+        personnel_id: Personnel ID
+        fitness_record_id: Fitness record ID
+        fitness_status: New fitness status
+        notes: Update notes (optional)
+        db: Database session
+        
+    Returns:
+        Update result
+    """
+    try:
+        result = await medical_fitness_service.update_fitness_status(
+            personnel_id=personnel_id,
+            fitness_record_id=fitness_record_id,
+            fitness_status=fitness_status,
+            notes=notes,
+            db=db
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update fitness status: {str(e)}"
+        )
+
+@router.post("/{personnel_id}/medical-alerts")
+async def create_medical_alert(
+    personnel_id: int,
+    alert_type: str,
+    message: str,
+    severity: str = "MEDIUM",
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Create medical alert for personnel
+    
+    Args:
+        personnel_id: Personnel ID
+        alert_type: Alert type
+        message: Alert message
+        severity: Alert severity (LOW, MEDIUM, HIGH, CRITICAL)
+        db: Database session
+        
+    Returns:
+        Alert creation result
+    """
+    try:
+        alert = await medical_fitness_service.create_medical_alert(
+            personnel_id=personnel_id,
+            alert_type=alert_type,
+            message=message,
+            severity=severity,
+            db=db
+        )
+        return alert
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create medical alert: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/medical-alerts")
+async def get_medical_alerts(
+    personnel_id: int,
+    severity: Optional[str] = Query(None),
+    resolved: Optional[bool] = Query(None),
+    db: Session = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """
+    Get medical alerts
+    
+    Args:
+        personnel_id: Filter by personnel ID (optional)
+        severity: Filter by severity (optional)
+        resolved: Filter by resolved status (optional)
+        db: Database session
+        
+    Returns:
+        List of medical alerts
+    """
+    try:
+        alerts = await medical_fitness_service.get_medical_alerts(
+            personnel_id=personnel_id,
+            severity=severity,
+            resolved=resolved,
+            db=db
+        )
+        return alerts
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get medical alerts: {str(e)}"
+        )
+
+@router.get("/medical-fitness/expiring")
+async def get_fitness_expiry_alerts(
+    days_ahead: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """
+    Get fitness records expiring within specified days
+    
+    Args:
+        days_ahead: Number of days ahead to check
+        db: Database session
+        
+    Returns:
+        List of expiring fitness records
+    """
+    try:
+        expiring_records = await medical_fitness_service.get_fitness_expiry_alerts(
+            days_ahead=days_ahead,
+            db=db
+        )
+        return expiring_records
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get expiring fitness records: {str(e)}"
+        )
+
+@router.get("/medical-fitness/compliance-report")
+async def get_fitness_compliance_report(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """
+    Get medical fitness compliance report
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        Fitness compliance statistics
+    """
+    try:
+        report = await medical_fitness_service.get_fitness_compliance_report(db=db)
+        return report
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get fitness compliance report: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/medical-summary")
+async def get_medical_summary(
+    personnel_id: int,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Get comprehensive medical summary for personnel
+    
+    Args:
+        personnel_id: Personnel ID
+        db: Database session
+        
+    Returns:
+        Medical summary
+    """
+    try:
+        summary = await medical_fitness_service.get_medical_summary(
+            personnel_id=personnel_id,
+            db=db
+        )
+        return summary
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get medical summary: {str(e)}"
+        )
+
+@router.post("/{personnel_id}/badges")
+async def create_badge_record(
+    personnel_id: int,
+    badge_data: Dict[str, Any],
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Create badge record for personnel
+    
+    Args:
+        personnel_id: Personnel ID
+        badge_data: Badge details
+        db: Database session
+        
+    Returns:
+        Created badge record information
+    """
+    try:
+        result = await badge_printing_service.create_badge_record(
+            personnel_id=personnel_id,
+            badge_data=badge_data,
+            db=db
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create badge record: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/badges")
+async def get_personnel_badges(
+    personnel_id: int,
+    badge_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """
+    Get personnel badge records
+    
+    Args:
+        personnel_id: Personnel ID
+        badge_type: Filter by badge type (optional)
+        status: Filter by printing status (optional)
+        db: Database session
+        
+    Returns:
+        List of badge records
+    """
+    try:
+        badges = await badge_printing_service.get_personnel_badges(
+            personnel_id=personnel_id,
+            badge_type=badge_type,
+            status=status,
+            db=db
+        )
+        return badges
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get badge records: {str(e)}"
+        )
+
+@router.put("/{personnel_id}/badges/{badge_record_id}/print-status")
+async def update_badge_printing_status(
+    personnel_id: int,
+    badge_record_id: str,
+    printing_status: str,
+    printer_used: Optional[str] = None,
+    notes: Optional[str] = None,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Update badge printing status
+    
+    Args:
+        personnel_id: Personnel ID
+        badge_record_id: Badge record ID
+        printing_status: New printing status
+        printer_used: Printer used (optional)
+        notes: Update notes (optional)
+        db: Database session
+        
+    Returns:
+        Update result
+    """
+    try:
+        result = await badge_printing_service.update_badge_printing_status(
+            personnel_id=personnel_id,
+            badge_record_id=badge_record_id,
+            printing_status=printing_status,
+            printer_used=printer_used,
+            notes=notes,
+            db=db
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update badge printing status: {str(e)}"
+        )
+
+@router.get("/badges/printing-summary")
+async def get_badge_printing_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """
+    Get badge printing summary statistics
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        Badge printing summary
+    """
+    try:
+        summary = await badge_printing_service.get_badge_printing_summary(db=db)
+        return summary
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get badge printing summary: {str(e)}"
+        )
+
+@router.post("/badges/batch")
+async def create_badge_printing_batch(
+    personnel_ids: List[int],
+    badge_data: Dict[str, Any],
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Create badge records for multiple personnel (batch operation)
+    
+    Args:
+        personnel_ids: List of personnel IDs
+        badge_data: Common badge data
+        db: Database session
+        
+    Returns:
+        Batch creation result
+    """
+    try:
+        result = await badge_printing_service.create_badge_printing_batch(
+            personnel_ids=personnel_ids,
+            badge_data=badge_data,
+            db=db
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create badge batch: {str(e)}"
+        )
+
+@router.get("/badges/expiring")
+async def get_badge_expiry_alerts(
+    days_ahead: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """
+    Get badges expiring within specified days
+    
+    Args:
+        days_ahead: Number of days ahead to check
+        db: Database session
+        
+    Returns:
+        List of expiring badges
+    """
+    try:
+        expiring_badges = await badge_printing_service.get_badge_expiry_alerts(
+            days_ahead=days_ahead,
+            db=db
+        )
+        return expiring_badges
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get expiring badges: {str(e)}"
+        )
+
+@router.post("/badges/template")
+async def generate_badge_template(
+    badge_type: str,
+    access_level: str,
+    template_data: Dict[str, Any],
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Generate badge template for printing
+    
+    Args:
+        badge_type: Badge type
+        access_level: Access level
+        template_data: Template configuration data
+        db: Database session
+        
+    Returns:
+        Badge template configuration
+    """
+    try:
+        template = await badge_printing_service.generate_badge_template(
+            badge_type=badge_type,
+            access_level=access_level,
+            template_data=template_data
+        )
+        return template
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate badge template: {str(e)}"
+        )
+
+@router.post("/{personnel_id}/audit-trail")
+async def create_audit_entry(
+    personnel_id: int,
+    event_type: str,
+    description: str,
+    old_values: Optional[Dict[str, Any]] = None,
+    new_values: Optional[Dict[str, Any]] = None,
+    severity: str = "LOW",
+    user_id: Optional[int] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Create audit entry for personnel
+    
+    Args:
+        personnel_id: Personnel ID
+        event_type: Type of event
+        description: Event description
+        old_values: Previous values (optional)
+        new_values: New values (optional)
+        severity: Event severity level
+        user_id: User who performed the action (optional)
+        ip_address: IP address of the action (optional)
+        user_agent: User agent string (optional)
+        db: Database session
+        
+    Returns:
+        Created audit entry
+    """
+    try:
+        result = await audit_trail_service.create_audit_entry(
+            personnel_id=personnel_id,
+            event_type=event_type,
+            description=description,
+            old_values=old_values,
+            new_values=new_values,
+            severity=severity,
+            user_id=user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            db=db
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create audit entry: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/audit-trail")
+async def get_personnel_audit_trail(
+    personnel_id: int,
+    event_type: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """
+    Get personnel audit trail
+    
+    Args:
+        personnel_id: Personnel ID
+        event_type: Filter by event type (optional)
+        severity: Filter by severity (optional)
+        start_date: Filter by start date (optional)
+        end_date: Filter by end date (optional)
+        limit: Maximum number of records to return
+        db: Database session
+        
+    Returns:
+        List of audit entries
+    """
+    try:
+        audit_trail = await audit_trail_service.get_personnel_audit_trail(
+            personnel_id=personnel_id,
+            event_type=event_type,
+            severity=severity,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+            db=db
+        )
+        return audit_trail
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get audit trail: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/audit-summary")
+async def get_audit_summary(
+    personnel_id: int,
+    days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Get audit summary for personnel
+    
+    Args:
+        personnel_id: Personnel ID
+        days: Number of days to analyze
+        db: Database session
+        
+    Returns:
+        Audit summary statistics
+    """
+    try:
+        summary = await audit_trail_service.get_audit_summary(
+            personnel_id=personnel_id,
+            days=days,
+            db=db
+        )
+        return summary
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get audit summary: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/compliance-report")
+async def get_compliance_report(
+    personnel_id: int,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Get compliance report for personnel
+    
+    Args:
+        personnel_id: Personnel ID
+        db: Database session
+        
+    Returns:
+        Compliance report
+    """
+    try:
+        report = await audit_trail_service.get_compliance_report(
+            personnel_id=personnel_id,
+            db=db
+        )
+        return report
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get compliance report: {str(e)}"
+        )
+
+@router.get("/audit/system-report")
+async def get_system_audit_report(
+    days: int = Query(30, ge=1, le=365),
+    event_type: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Get system-wide audit report
+    
+    Args:
+        days: Number of days to analyze
+        event_type: Filter by event type (optional)
+        severity: Filter by severity (optional)
+        db: Database session
+        
+    Returns:
+        System audit report
+    """
+    try:
+        report = await audit_trail_service.get_system_audit_report(
+            days=days,
+            event_type=event_type,
+            severity=severity,
+            db=db
+        )
+        return report
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get system audit report: {str(e)}"
+        )
+
+@router.get("/{personnel_id}/audit-export")
+async def export_audit_trail(
+    personnel_id: int,
+    format_type: str = Query("json", pattern="^(json|csv)$"),
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Export audit trail for personnel
+    
+    Args:
+        personnel_id: Personnel ID
+        format_type: Export format (json, csv)
+        start_date: Filter by start date (optional)
+        end_date: Filter by end date (optional)
+        db: Database session
+        
+    Returns:
+        Export result
+    """
+    try:
+        export_result = await audit_trail_service.export_audit_trail(
+            personnel_id=personnel_id,
+            format_type=format_type,
+            start_date=start_date,
+            end_date=end_date,
+            db=db
+        )
+        return export_result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to export audit trail: {str(e)}"
+        )
+
+@router.get("/analytics/overview")
+async def get_personnel_overview(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """
+    Get comprehensive personnel overview analytics
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        Personnel overview analytics
+    """
+    try:
+        overview = await personnel_analytics_service.get_personnel_overview(db=db)
+        return overview
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get personnel overview: {str(e)}"
+        )
+
+@router.get("/analytics/attendance")
+async def get_attendance_analytics(
+    days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Get attendance analytics and patterns
+    
+    Args:
+        days: Number of days to analyze
+        db: Database session
+        
+    Returns:
+        Attendance analytics data
+    """
+    try:
+        analytics = await personnel_analytics_service.get_attendance_analytics(days=days, db=db)
+        return analytics
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get attendance analytics: {str(e)}"
+        )
+
+@router.get("/analytics/location")
+async def get_location_analytics(
+    days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Get location analytics and movement patterns
+    
+    Args:
+        days: Number of days to analyze
+        db: Database session
+        
+    Returns:
+        Location analytics data
+    """
+    try:
+        analytics = await personnel_analytics_service.get_location_analytics(days=days, db=db)
+        return analytics
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get location analytics: {str(e)}"
+        )
+
+@router.get("/analytics/performance-metrics")
+async def get_performance_metrics(
+    days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Get comprehensive performance metrics
+    
+    Args:
+        days: Number of days to analyze
+        db: Database session
+        
+    Returns:
+        Performance metrics dashboard
+    """
+    try:
+        metrics = await personnel_analytics_service.get_performance_metrics(days=days, db=db)
+        return metrics
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get performance metrics: {str(e)}"
+        )
 
 @router.put("/{personnel_id}/emergency-contact")
 async def update_emergency_contact(
@@ -2856,7 +2852,6 @@ async def update_emergency_contact(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update emergency contact: {str(e)}"
         )
-
 
 @router.get("/{personnel_id}/compliance-status")
 async def get_compliance_status(
@@ -2915,7 +2910,6 @@ async def get_compliance_status(
             detail=f"Failed to get compliance status: {str(e)}"
         )
 
-
 @router.get("/export/templates")
 async def get_export_templates() -> Dict[str, Any]:
     """
@@ -2932,7 +2926,6 @@ async def get_export_templates() -> Dict[str, Any]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get export templates: {str(e)}"
         )
-
 
 @router.post("/export/preview")
 async def get_export_preview(
@@ -2963,7 +2956,6 @@ async def get_export_preview(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get export preview: {str(e)}"
         )
-
 
 @router.post("/export")
 async def export_personnel_data(
@@ -3006,7 +2998,6 @@ async def export_personnel_data(
             detail=f"Failed to export personnel data: {str(e)}"
         )
 
-
 @router.post("/export/schedule")
 async def schedule_export(
     export_config: Dict[str, Any],
@@ -3034,7 +3025,6 @@ async def schedule_export(
             detail=f"Failed to schedule export: {str(e)}"
         )
 
-
 @router.get("/export/history")
 async def get_export_history(
     limit: int = Query(50, ge=1, le=1000),
@@ -3061,7 +3051,6 @@ async def get_export_history(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get export history: {str(e)}"
         )
-
 
 @router.get("/{personnel_id}/activity")
 async def get_personnel_activity(
@@ -3116,7 +3105,6 @@ async def get_personnel_activity(
             detail=f"Failed to get personnel activity: {str(e)}"
         )
 
-
 @router.post("/update-badge-ids")
 async def update_all_badge_ids(db: Session = Depends(get_db)) -> Dict[str, Any]:
     """
@@ -3149,264 +3137,7 @@ async def update_all_badge_ids(db: Session = Depends(get_db)) -> Dict[str, Any]:
             detail=f"Failed to update badge IDs: {str(e)}"
         )
 
-
 # BioTime Integration Endpoints
-
-@router.post("/sync/biotime")
-async def sync_personnel_from_biotime(
-    force_sync: bool = Query(False, description="Force full sync regardless of last sync time"),
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Sync personnel data from BioTime to Apex POB
-    
-    Args:
-        force_sync: Force full sync regardless of last sync time
-        db: Database session
-        
-    Returns:
-        Sync result with statistics
-    """
-    try:
-        result = await biotime_sync_service.sync_personnel_from_biotime(db, force_sync=force_sync)
-        return result
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to sync from BioTime: {str(e)}"
-        )
-
-
-@router.post("/sync/to-biotime")
-async def sync_personnel_to_biotime(
-    personnel_ids: Optional[List[int]] = Query(None, description="Specific personnel IDs to sync"),
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Sync personnel data from POB to BioTime
-    
-    Args:
-        personnel_ids: Specific personnel IDs to sync (None for all)
-        db: Database session
-        
-    Returns:
-        Sync result with statistics
-    """
-    try:
-        result = await biotime_sync_service.sync_personnel_to_biotime(db, personnel_ids=personnel_ids)
-        return result
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to sync to BioTime: {str(e)}"
-        )
-
-
-@router.get("/sync/biotime-status")
-async def get_biotime_sync_status() -> Dict[str, Any]:
-    """
-    Get current BioTime synchronization status
-    
-    Returns:
-        Sync status information
-    """
-    try:
-        result = await biotime_sync_service.get_sync_status()
-        return result
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get sync status: {str(e)}"
-        )
-
-
-@router.post("/sync/biotime/full")
-async def force_full_biotime_sync(db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """
-    Force full synchronization with BioTime
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        Full sync result
-    """
-    try:
-        result = await biotime_sync_service.force_full_sync(db)
-        return result
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to force full sync: {str(e)}"
-        )
-
-
-@router.post("/{personnel_id}/biometric/enroll")
-async def enroll_personnel_biometric(
-    personnel_id: int,
-    biometric_type: str = Query(..., description="Type of biometric (fingerprint, face)"),
-    template_data: Dict[str, Any] = ...,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Enroll biometric template for personnel and sync with BioTime
-    
-    Args:
-        personnel_id: Personnel ID
-        biometric_type: Type of biometric (fingerprint, face)
-        template_data: Template data
-        db: Database session
-        
-    Returns:
-        Enrollment result
-    """
-    try:
-        result = await biotime_sync_service.enroll_biometric_template(
-            personnel_id=personnel_id,
-            biometric_type=biometric_type,
-            template_data=template_data,
-            db=db
-        )
-        return result
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to enroll biometric: {str(e)}"
-        )
-
-
-@router.post("/{personnel_id}/biometric/verify")
-async def verify_personnel_biometric(
-    personnel_id: int,
-    biometric_data: Dict[str, Any] = ...,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Real-time biometric verification
-    
-    Args:
-        personnel_id: Personnel ID
-        biometric_data: Biometric data for verification
-        db: Database session
-        
-    Returns:
-        Verification result
-    """
-    try:
-        result = await biotime_sync_service.verify_biometric_realtime(
-            personnel_id=personnel_id,
-            biometric_data=biometric_data,
-            db=db
-        )
-        return result
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to verify biometric: {str(e)}"
-        )
-
-
-@router.get("/{personnel_id}/biometric/templates")
-async def get_personnel_biometric_templates(
-    personnel_id: int,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Get biometric templates for personnel
-    
-    Args:
-        personnel_id: Personnel ID
-        db: Database session
-        
-    Returns:
-        Biometric templates
-    """
-    try:
-        personnel = db.query(Personnel).filter(Personnel.id == personnel_id).first()
-        if not personnel:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Personnel not found"
-            )
-        
-        templates = {
-            "fingerprint_templates": personnel.fingerprint_templates or [],
-            "face_template": personnel.face_template,
-            "biometric_enrolled": personnel.biometric_enrolled,
-            "biometric_data": personnel.biometric_data or {}
-        }
-        
-        return {
-            "success": True,
-            "personnel_id": personnel_id,
-            "templates": templates
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get biometric templates: {str(e)}"
-        )
-
-
-@router.delete("/{personnel_id}/biometric/{template_id}")
-async def delete_personnel_biometric_template(
-    personnel_id: int,
-    template_id: str,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Delete biometric template
-    
-    Args:
-        personnel_id: Personnel ID
-        template_id: Template ID
-        db: Database session
-        
-    Returns:
-        Deletion result
-    """
-    try:
-        personnel = db.query(Personnel).filter(Personnel.id == personnel_id).first()
-        if not personnel:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Personnel not found"
-            )
-        
-        # Remove template from local database
-        if personnel.fingerprint_templates:
-            personnel.fingerprint_templates = [
-                t for t in personnel.fingerprint_templates 
-                if t.get("id") != template_id
-            ]
-        
-        if template_id == "face_template":
-            personnel.face_template = None
-        
-        # Update biometric enrollment status
-        if not personnel.fingerprint_templates and not personnel.face_template:
-            personnel.biometric_enrolled = False
-        
-        personnel.updated_at = datetime.utcnow()
-        db.commit()
-        
-        # TODO: Delete from BioTime when API is available
-        
-        return {
-            "success": True,
-            "message": "Biometric template deleted successfully",
-            "template_id": template_id
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete biometric template: {str(e)}"
-        )
-
-
-# ============================================================================
-# BioTime 9.5 Compatible Employee Endpoints
-# ============================================================================
 
 @router.get("/employees/", response_model=List[EmployeeResponse])
 async def get_employees(
@@ -3444,6 +3175,42 @@ async def create_employee(
         raise HTTPException(status_code=400, detail=result['error'])
     
     return result['data']
+
+@router.get("/employees/export/")
+async def export_employees(
+    format: str = Query("xlsx", description="Export format (xlsx/csv)"),
+    ids: Optional[str] = Query(None, description="Comma-separated employee IDs"),
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Export employees to Excel/CSV"""
+    service = PersonnelBioTimeService(db)
+    
+    employee_ids = [int(id.strip()) for id in ids.split(',')] if ids else None
+    
+    # Both helpers return raw bytes/str. Returning them directly made FastAPI try
+    # to JSON-encode the payload, which blew up decoding the xlsx zip as UTF-8 —
+    # wrap them in a real file response instead.
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if format == "xlsx":
+        payload = await service.export_employees_xlsx(employee_ids)
+        return StreamingResponse(
+            io.BytesIO(payload),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="employees_{stamp}.xlsx"'},
+        )
+
+    payload = await service.export_employees_csv(employee_ids)
+    if isinstance(payload, str):
+        payload = payload.encode("utf-8")
+    return StreamingResponse(
+        io.BytesIO(payload),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="employees_{stamp}.csv"'},
+    )
+
+# BioTime Biometric endpoints
 
 @router.get("/employees/{emp_id}/", response_model=EmployeeResponse)
 async def get_employee(
@@ -3519,85 +3286,4 @@ async def batch_import_employees(
     
     service = PersonnelBioTimeService(db)
     return await service.batch_import_employees(file, current_user.id)
-
-@router.get("/employees/export/")
-async def export_employees(
-    format: str = Query("xlsx", description="Export format (xlsx/csv)"),
-    ids: Optional[str] = Query(None, description="Comma-separated employee IDs"),
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """Export employees to Excel/CSV"""
-    service = PersonnelBioTimeService(db)
-    
-    employee_ids = [int(id.strip()) for id in ids.split(',')] if ids else None
-    
-    if format == "xlsx":
-        return await service.export_employees_xlsx(employee_ids)
-    else:
-        return await service.export_employees_csv(employee_ids)
-
-# BioTime Biometric endpoints
-@router.post("/employees/{emp_id}/enroll")
-async def enroll_employee_biometric(
-    emp_id: int,
-    enrollment_data: dict = Form(...),
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """Enroll biometric - Send command to device"""
-    service = PersonnelBioTimeService(db)
-    
-    if not current_user.is_superuser and current_user.role not in ['registrar', 'hr_admin']:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
-    
-    result = await service.enroll_biometric(emp_id, enrollment_data, current_user.id)
-    
-    if not result['success']:
-        raise HTTPException(status_code=400, detail=result['error'])
-    
-    return result
-
-@router.post("/employees/{emp_id}/bio-data")
-async def save_biometric_data(
-    emp_id: int,
-    bio_data: dict,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """Save biometric template to DB and sync to devices"""
-    service = PersonnelBioTimeService(db)
-    
-    if not current_user.is_superuser and current_user.role not in ['registrar', 'hr_admin']:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
-    
-    result = await service.save_biometric_data(emp_id, bio_data, current_user.id)
-    
-    if not result['success']:
-        raise HTTPException(status_code=400, detail=result['error'])
-    
-    return result
-
-@router.delete("/employees/{emp_id}/bio-data")
-async def delete_biometric_data(
-    emp_id: int,
-    bio_data: dict,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """Delete biometric data from DB and devices"""
-    service = PersonnelBioTimeService(db)
-    
-    if not current_user.is_superuser and current_user.role not in ['registrar', 'hr_admin']:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
-    
-    result = await service.delete_biometric_data(emp_id, bio_data, current_user.id)
-    
-    if not result['success']:
-        raise HTTPException(status_code=400, detail=result['error'])
-    
-    return result
-
-
-
 

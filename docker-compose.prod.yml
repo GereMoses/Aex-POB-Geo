@@ -82,8 +82,8 @@ services:
 
   # ── DB Init (runs once on first deploy, then exits) ─────────────────────────
   db-init:
-    # Runs on the BACKEND image so it has psql + python + the app code: it applies
-    # the complete schema and seeds the global admin user in one step.
+    # Runs on the BACKEND image so it has psql + python + the app code: it brings
+    # the schema to head with Alembic and seeds the global admin user in one step.
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -101,7 +101,6 @@ services:
       GLOBAL_ADMIN_USERNAME: ${GLOBAL_ADMIN_USERNAME:-globaladmin}
     volumes:
       - ./docker/db-init.sh:/db-init.sh:ro
-      - ./database/init/complete_schema.sql:/migrations/complete_schema.sql:ro
       - ./database/init/incremental.sql:/migrations/incremental.sql:ro
     entrypoint: ["/bin/bash", "/db-init.sh"]
     depends_on:
@@ -132,6 +131,9 @@ services:
       - uploads_data:/app/uploads
       - media_data:/app/media
       - logs_data:/app/logs
+      # Punch selfies. Deliberately NOT under uploads_data or media_data —
+      # nginx serves both of those directly from disk with no auth.
+      - punch_selfies_data:/app/private
       - ${BACKUP_DIR:-db_backups}:/backups
       # The backend applies pending migrations itself at startup (see
       # _apply_pending_migrations in main.py). db-init still runs them on a full
@@ -453,6 +455,8 @@ services:
 # ── Named Volumes ─────────────────────────────────────────────────────────────
 volumes:
   whatsapp_instances:
+    driver: local
+  punch_selfies_data:
     driver: local
   postgres_data:
     driver: local

@@ -196,8 +196,8 @@ const EnhancedLogin = () => {
             {/* Header */}
             <div style={{ textAlign: 'center', marginBottom: '32px' }}>
               <img
-                src="/logo/image.png"
-                alt="Marconi.ng EPC Limited"
+                src={`${process.env.PUBLIC_URL || ''}/logo/apex-mark.png`}
+                alt="Apex POB"
                 style={{
                   width: 90,
                   height: 90,
@@ -208,7 +208,7 @@ const EnhancedLogin = () => {
                 }}
               />
               <Title level={3} style={{ margin: '8px 0 4px 0', color: '#262626' }}>
-                Marconi.ng EPC Limited
+                Apex POB
               </Title>
               <Text type="secondary" style={{ fontSize: '13px' }}>
                 Personnel on Board Management System

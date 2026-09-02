@@ -26,12 +26,32 @@ class Settings(BaseSettings):
     DB_POOL_RECYCLE: int = 3600
     DB_POOL_PRE_PING: bool = True
 
+    # Operating timezone.
+    # Punches are stored as UTC instants, but shift start/end times are entered
+    # by an administrator as local wall-clock. Comparing the two without
+    # converting made every employee read an hour early in Lagos (UTC+1) —
+    # lateness under-reported, early departure over-reported.
+    TIMEZONE: str = "Africa/Lagos"
+
     # Redis Configuration
-    REDIS_URL: str = "redis://redis:6379/0"
+    # REDIS_URL is derived from REDIS_HOST/PORT/DB/PASSWORD unless it is set
+    # explicitly. Deployments only ever set REDIS_HOST, so a hardcoded default
+    # here silently pointed pub/sub at a host that does not exist.
     REDIS_HOST: str = "redis"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     REDIS_PASSWORD: str = ""
+    REDIS_URL: str = ""
+
+    @validator("REDIS_URL", pre=True, always=True)
+    def _build_redis_url(cls, v, values):
+        if v:
+            return v
+        auth = f":{values.get('REDIS_PASSWORD')}@" if values.get("REDIS_PASSWORD") else ""
+        host = values.get("REDIS_HOST", "redis")
+        port = values.get("REDIS_PORT", 6379)
+        db   = values.get("REDIS_DB", 0)
+        return f"redis://{auth}{host}:{port}/{db}"
 
     # JWT Configuration
     SECRET_KEY: str = "pob-system-production-secret-key-2024-secure-jwt-auth"
@@ -61,6 +81,12 @@ class Settings(BaseSettings):
         "http://localhost:8000",
         "http://localhost:8080",
         "http://localhost:5173",
+        # The native clock app. Inside Capacitor the page is served from a
+        # local scheme, so every API call is cross-origin — "https://localhost"
+        # on Android and "capacitor://localhost" on iOS. Without these the app
+        # signs in against a CORS error and nothing else works.
+        "https://localhost",
+        "capacitor://localhost",
     ]
 
     @validator("BACKEND_CORS_ORIGINS", pre=True)

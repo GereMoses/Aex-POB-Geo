@@ -1,0 +1,29 @@
+{
+  "name": "apex-clock",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Apex Clock \u2014 geofenced time clock for warehouse staff",
+  "scripts": {
+    "sync": "node scripts/pull-web.js",
+    "sync:ios": "node scripts/pull-web.js && npx cap sync ios",
+    "sync:android": "node scripts/pull-web.js && npx cap sync android",
+    "ios": "npm run sync:ios && node scripts/prepare-ios.js && npx cap open ios",
+    "ios:prepare": "node scripts/prepare-ios.js",
+    "ios:add": "npx cap add ios && node scripts/prepare-ios.js",
+    "android": "npm run sync:android && npx cap open android",
+    "build:android": "docker build -f Dockerfile.build -t apex-clock-build .. && docker run --rm -e APEX_API_BASE -v \"$PWD/dist:/out\" apex-clock-build"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/app": "^7.0.0",
+    "@capacitor/camera": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/geolocation": "^7.0.0",
+    "@capacitor/ios": "^7.0.0",
+    "@capacitor/preferences": "^7.0.0",
+    "xcode": "^3.0.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0"
+  }
+}

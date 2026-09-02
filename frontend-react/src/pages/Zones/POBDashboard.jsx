@@ -186,7 +186,7 @@ const WithPositionPicker = ({ zone, onPositionChange, onViewPersonnel, children 
   );
 };
 
-/* ── Zone Tile ───────────────────────────────────────────────────────────────── */
+/* ── Warehouse Tile ───────────────────────────────────────────────────────────────── */
 const ZoneTile = ({ zone, onClick, width = 200, getCount }) => {
   const bg  = tileColor(zone);
   const cnt = getCount ? getCount(zone) : (zone.current_personnel_count ?? 0);
@@ -282,7 +282,7 @@ const PobCounter = ({ totalPOB }) => (
   </div>
 );
 
-/* ── Zone Personnel Drawer ───────────────────────────────────────────────────── */
+/* ── Warehouse Personnel Drawer ───────────────────────────────────────────────────── */
 const ZonePersonnelDrawer = ({ zone, open, onClose }) => {
   const { data: personnel = [], isLoading } = useQuery({
     queryKey: ['zone-live-personnel', zone?.id],
@@ -312,7 +312,7 @@ const ZonePersonnelDrawer = ({ zone, open, onClose }) => {
           <div style={{ marginTop:12, color:'#6B7280', fontSize:13 }}>Loading personnel…</div>
         </div>
       ) : personnel.length === 0 ? (
-        <Empty description="No personnel currently in this zone" style={{ marginTop:40 }} />
+        <Empty description="No one currently at this warehouse" style={{ marginTop:40 }} />
       ) : (
         <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
           {personnel.map(p => (
@@ -346,7 +346,7 @@ const ZonePersonnelDrawer = ({ zone, open, onClose }) => {
 const CountryOverview = ({ topLevelZones, totalPOB, byParent, onSelectZone, getCount, onPositionChange, onViewPersonnel }) => {
   const gc = getCount || (z => z.current_personnel_count ?? 0);
 
-  /* Zone categorisation */
+  /* Warehouse categorisation */
   const autoZones     = topLevelZones.filter(z => !z.tile_position || z.tile_position === 'auto');
   const leftZones     = topLevelZones.filter(z => z.tile_position === 'left');
   const rightZones    = topLevelZones.filter(z => z.tile_position === 'right');
@@ -399,7 +399,7 @@ const CountryOverview = ({ topLevelZones, totalPOB, byParent, onSelectZone, getC
           <div>
             <div style={{ fontWeight:600,fontSize:14,color:'#374151' }}>No zones configured yet</div>
             <div style={{ fontSize:12,color:'#6B7280',marginTop:6,lineHeight:1.7 }}>
-              Go to <strong>Zone List</strong> → Create zones. Set a <strong>Parent Zone</strong> to
+              Go to <strong>Warehouse List</strong> → Create zones. Set a <strong>Parent Warehouse</strong> to
               build hierarchies. Use <strong>Tile Position</strong> to control placement.
             </div>
           </div>
@@ -494,7 +494,7 @@ const CountryOverview = ({ topLevelZones, totalPOB, byParent, onSelectZone, getC
   );
 };
 
-/* ── Zone Detail View (drill-down, not draggable) ────────────────────────────── */
+/* ── Warehouse Detail View (drill-down, not draggable) ────────────────────────────── */
 const ZoneDetailView = ({ zone, subZones, onBack, onDrillDown, byParent, getCount, onViewPersonnel }) => {
   const gc = getCount || (z => z.current_personnel_count ?? 0);
   const topZones    = subZones.filter(z => z.tile_position === 'top');
@@ -784,7 +784,7 @@ const POBDashboard = ({ onRefreshDash }) => {
     mutationFn: ({ id, position }) =>
       apiService.patch(`/api/v1/zones/${id}/position`, { tile_position: position }),
     onSuccess: (_, { position }) => {
-      message.success(`Zone moved to ${position}`);
+      message.success(`Warehouse moved to ${position}`);
       queryClient.invalidateQueries({ queryKey: ['zones-hierarchy'] });
       queryClient.invalidateQueries({ queryKey: ['zones-dashboard'] });
     },

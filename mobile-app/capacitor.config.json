@@ -1,0 +1,17 @@
+{
+  "appId": "ng.apexpob.clock",
+  "appName": "Apex Clock",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "Geolocation": {
+      "permissions": ["location"]
+    }
+  }
+}

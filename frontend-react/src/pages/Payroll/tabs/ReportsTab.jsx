@@ -146,19 +146,19 @@ const ReportsTab = ({ periods }) => {
     if (!reportData?.zones) return null;
     const chartData = reportData.zones.map(z => ({
       name: z.zone_name?.slice(0, 12) || 'Unknown',
-      'Zone Allowance': z.zone_allowance_cost || 0,
+      'Warehouse Allowance': z.zone_allowance_cost || 0,
       'Night Premium': z.night_premium || 0,
       'Hazard Premium': z.hazard_premium || 0,
     }));
     return (
       <>
         <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
-          <MetricBox label="Total Zone Cost" value={fmt(reportData.total_zone_cost)} color="#d97706" />
+          <MetricBox label="Total Warehouse Cost" value={fmt(reportData.total_zone_cost)} color="#d97706" />
           <MetricBox label="Total Night Premium" value={fmt(reportData.total_night_premium)} color="#7c3aed" />
           <MetricBox label="Total Hazard Premium" value={fmt(reportData.total_hazard_premium)} color="#dc2626" />
         </div>
         <div style={{ background: '#fff', borderRadius: 8, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: 12 }}>
-          <Text strong style={{ fontSize: 13 }}>Zone Cost Breakdown</Text>
+          <Text strong style={{ fontSize: 13 }}>Warehouse Cost Breakdown</Text>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -166,7 +166,7 @@ const ReportsTab = ({ periods }) => {
               <YAxis tickFormatter={v => `₦${(v / 1000).toFixed(0)}k`} />
               <RechartsTip formatter={v => fmt(v)} />
               <Legend />
-              <Bar dataKey="Zone Allowance" fill="#d97706" stackId="a" />
+              <Bar dataKey="Warehouse Allowance" fill="#d97706" stackId="a" />
               <Bar dataKey="Night Premium" fill="#7c3aed" stackId="a" />
               <Bar dataKey="Hazard Premium" fill="#dc2626" stackId="a" />
             </BarChart>
@@ -174,10 +174,10 @@ const ReportsTab = ({ periods }) => {
         </div>
         <Table dataSource={reportData.zones} rowKey="zone_id" size="small" pagination={false}
           columns={[
-            { title: 'Zone', dataIndex: 'zone_name', key: 'name' },
+            { title: 'Warehouse', dataIndex: 'zone_name', key: 'name' },
             { title: 'Employees', dataIndex: 'employee_count', key: 'emp', align: 'center', width: 100 },
-            { title: 'Zone Hours', dataIndex: 'total_zone_hours', key: 'hrs', align: 'right', width: 110 },
-            { title: 'Zone Allowance', dataIndex: 'zone_allowance_cost', key: 'allow', align: 'right', render: v => fmt(v) },
+            { title: 'Warehouse Hours', dataIndex: 'total_zone_hours', key: 'hrs', align: 'right', width: 110 },
+            { title: 'Warehouse Allowance', dataIndex: 'zone_allowance_cost', key: 'allow', align: 'right', render: v => fmt(v) },
             { title: 'Night Premium', dataIndex: 'night_premium', key: 'night', align: 'right', render: v => fmt(v) },
             { title: 'Hazard Premium', dataIndex: 'hazard_premium', key: 'hazard', align: 'right', render: v => fmt(v) },
             { title: 'Total Cost', key: 'total', align: 'right', render: (_, r) => <Text strong>{fmt((r.zone_allowance_cost || 0) + (r.night_premium || 0) + (r.hazard_premium || 0))}</Text> },
@@ -346,7 +346,7 @@ const ReportsTab = ({ periods }) => {
         style={{ marginBottom: 12 }}
         items={[
           { key: 'summary',    label: <span><BarChartOutlined /> Salary Summary</span>        },
-          { key: 'zone',       label: <span><DollarOutlined /> Zone Cost (POB)</span>         },
+          { key: 'zone',       label: <span><DollarOutlined /> Warehouse Cost (POB)</span>         },
           { key: 'contractor', label: <span><PieChartOutlined /> Contractor vs Staff</span>   },
           { key: 'itemwise',   label: <span><BarChartOutlined /> Item-wise</span>             },
           { key: 'variance',   label: <span><LineChartOutlined /> Period Variance</span>      },

@@ -227,7 +227,7 @@ const ZoneCard = ({ zone, onView, onEdit, onAssignReader, onDelete, onStatusChan
           {count > 0 && onResetOccupancy && (
             <Tooltip title="Force-reset occupancy to 0 (clears stale check-ins)">
               <Popconfirm
-                title="Reset zone occupancy?"
+                title="Reset warehouse occupancy?"
                 description={`This will force-checkout all ${count} personnel currently counted in this zone and reset the count to 0. Use this to clear stale/phantom records.`}
                 onConfirm={e => { e.stopPropagation(); onResetOccupancy(zone.id); }}
                 onCancel={e => e.stopPropagation()}
@@ -337,8 +337,8 @@ const ZoneCard = ({ zone, onView, onEdit, onAssignReader, onDelete, onStatusChan
           </button>
         ))}
         <Popconfirm
-          title="Delete zone?"
-          description="This permanently removes the zone and unassigns all readers."
+          title="Delete warehouse?"
+          description="This permanently removes the warehouse and its staff assignments."
           onConfirm={() => onDelete(zone.id)}
           okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
         >
@@ -359,7 +359,7 @@ const ZoneCard = ({ zone, onView, onEdit, onAssignReader, onDelete, onStatusChan
   );
 };
 
-/* ── Zone Detail Drawer ────────────────────────────────────────────────────── */
+/* ── Warehouse Detail Drawer ────────────────────────────────────────────────────── */
 
 const ZoneDetailDrawer = ({ zone, open, onClose, onPrev, onNext, hasPrev, hasNext }) => {
   const [drawerTab, setDrawerTab] = useState('personnel');
@@ -465,7 +465,7 @@ const ZoneDetailDrawer = ({ zone, open, onClose, onPrev, onNext, hasPrev, hasNex
                 color: hasPrev ? 'white' : 'rgba(255,255,255,0.25)', fontSize: 12,
                 transition: 'background 0.15s',
               }}
-              title="Previous zone"
+              title="Previous warehouse"
             ><LeftOutlined /></button>
 
             <div style={{
@@ -610,103 +610,6 @@ const ZoneDetailDrawer = ({ zone, open, onClose, onPrev, onNext, hasPrev, hasNex
               ),
             },
             {
-              key: 'readers',
-              label: <Space size={4}><ApiOutlined />Readers ({readerList.length})</Space>,
-              children: (
-                <Spin spinning={rLoading}>
-                  {readerList.length === 0 ? (
-                    <Empty description="No readers assigned" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ padding: '32px 0' }} />
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 16 }}>
-                      {readerList.map((r) => (
-                        <div key={r.reader_id} style={{
-                          padding: '12px 14px', borderRadius: 10,
-                          background: r.state === 1 ? '#F0FDF4' : '#F9FAFB',
-                          border: `1px solid ${r.state === 1 ? '#BBF7D0' : '#E5E7EB'}`,
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <div style={{
-                              width: 36, height: 36, borderRadius: 8,
-                              background: r.state === 1
-                                ? 'linear-gradient(135deg,#059669,#10B981)'
-                                : 'linear-gradient(135deg,#6B7280,#9CA3AF)',
-                              display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              color: 'white', fontSize: 16,
-                            }}>
-                              <WifiOutlined />
-                            </div>
-                            <div>
-                              <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
-                                {r.alias}
-                                {(() => {
-                                  const p = r.reader_purpose || 'ATTENDANCE';
-                                  const cfg = {
-                                    ACCESS_ENTRY:  { color: '#10B981', bg: '#ECFDF5', border: '#A7F3D0', label: '▶ Entry'     },
-                                    ACCESS_EXIT:   { color: '#EF4444', bg: '#FEF2F2', border: '#FECACA', label: '◀ Exit'      },
-                                    ATTENDANCE:    { color: '#6B7280', bg: '#F9FAFB', border: '#E5E7EB', label: '⏱ T&A'       },
-                                    MUSTERING:     { color: '#F59E0B', bg: '#FFFBEB', border: '#FDE68A', label: '🔔 Muster'   },
-                                    POB:           { color: '#3B82F6', bg: '#EFF6FF', border: '#BFDBFE', label: '👤 POB'      },
-                                    EMERGENCY:     { color: '#DC2626', bg: '#FEF2F2', border: '#FECACA', label: '🚨 Emergency' },
-                                  }[p] || { color: '#6B7280', bg: '#F9FAFB', border: '#E5E7EB', label: p };
-                                  return (
-                                    <span style={{
-                                      fontSize: 10, fontWeight: 700, padding: '1px 6px',
-                                      borderRadius: 4, border: `1px solid ${cfg.border}`,
-                                      background: cfg.bg, color: cfg.color,
-                                    }}>{cfg.label}</span>
-                                  );
-                                })()}
-                              </div>
-                              <div style={{ fontSize: 11, color: '#9CA3AF', fontFamily: 'monospace' }}>
-                                {r.sn}{r.ip_address ? ` · ${r.ip_address}` : ''}
-                              </div>
-                            </div>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <div style={{ textAlign: 'right' }}>
-                              <div style={{
-                                fontSize: 11, fontWeight: 600,
-                                color: r.state === 1 ? '#10B981' : '#9CA3AF',
-                              }}>{r.state === 1 ? '● Online' : '○ Offline'}</div>
-                              <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
-                                {timeAgo(r.last_activity)}
-                              </div>
-                            </div>
-                            <Button
-                              size="small"
-                              icon={<SwapOutlined />}
-                              onClick={() => { setReassignReader(r); setReassignZoneId(null); }}
-                              style={{ fontSize: 11 }}
-                            >
-                              Reassign
-                            </Button>
-                            <Popconfirm
-                              title="Remove this reader from the zone?"
-                              description="The reader will be unassigned and can be added to another zone."
-                              okText="Remove"
-                              okType="danger"
-                              onConfirm={() => removeReaderMutation.mutate({ zoneId: zone.id, readerId: r.reader_id })}
-                            >
-                              <Button
-                                size="small"
-                                danger
-                                icon={<DeleteOutlined />}
-                                loading={removeReaderMutation.isPending}
-                                style={{ fontSize: 11 }}
-                              >
-                                Remove
-                              </Button>
-                            </Popconfirm>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </Spin>
-              ),
-            },
-            {
               key: 'info',
               label: <Space size={4}><InfoCircleOutlined />Info</Space>,
               children: (
@@ -717,7 +620,7 @@ const ZoneDetailDrawer = ({ zone, open, onClose, onPrev, onNext, hasPrev, hasNex
                     { label: 'Safety Contact',   value: zone.contact_person, mono: false },
                     { label: 'Contact Phone',    value: zone.contact_phone,  mono: true  },
                     { label: 'Safety Level',     value: zone.safety_level,   mono: false },
-                    { label: 'Parent Zone ID',   value: zone.parent_zone_id ? `#${zone.parent_zone_id}` : null, mono: true },
+                    { label: 'Parent Warehouse ID',   value: zone.parent_zone_id ? `#${zone.parent_zone_id}` : null, mono: true },
                     { label: 'ZKTeco Sync',      value: zone.zkteco_sync_enabled ? 'Enabled' : 'Disabled', mono: false },
                     { label: 'Last Sync',        value: zone.last_sync_at ? fmtTime(zone.last_sync_at) : null, mono: false },
                     { label: 'Created',          value: zone.created_at ? fmtTime(zone.created_at) : null, mono: false },
@@ -847,13 +750,14 @@ const ReadersTab = () => {
   const defaultAddr = `http://${window.location.hostname}`;
   const { data: admsConfig, refetch: refetchAdmsConfig } = useQuery({
     queryKey: ['adms-config'],
-    queryFn:  () => apiService.get('/api/device/adms-config'),
+    // No physical readers in a mobile-only deployment.
+    queryFn:  () => Promise.resolve(null),
     staleTime: 60000,
   });
   const serverAddr = admsConfig?.data?.server_url || admsConfig?.server_url || defaultAddr;
 
   const saveAddrMutation = useMutation({
-    mutationFn: (url) => apiService.put('/api/device/adms-config', { server_url: url }),
+    mutationFn: (url) => Promise.resolve(null),
     onSuccess: () => {
       message.success('ADMS server address saved');
       setEditingAddr(false);
@@ -865,7 +769,8 @@ const ReadersTab = () => {
   /* ── registered readers ── */
   const { data: termData, isLoading, refetch } = useQuery({
     queryKey: ['adms-terminals'],
-    queryFn:  () => apiService.get('/api/device/terminals/'),
+    // No physical readers in a mobile-only deployment.
+    queryFn:  () => Promise.resolve({ data: [] }),
     refetchInterval: 15000,
   });
   const all = Array.isArray(termData?.data) ? termData.data : Array.isArray(termData) ? termData : [];
@@ -902,7 +807,7 @@ const ReadersTab = () => {
   /* ── command history for selected device ── */
   const { data: cmdHistData, isLoading: cmdHistLoading } = useQuery({
     queryKey: ['adms-cmdhistory', cmdHistModal?.sn],
-    queryFn:  () => apiService.get(`/api/device/devcmd/?sn=${cmdHistModal?.sn}&limit=50`),
+    queryFn:  () => Promise.resolve({ data: [] }) || (`cmdHistModal?.sn}&limit=50`),
     enabled:  !!cmdHistModal,
   });
   const cmdHistRows = Array.isArray(cmdHistData?.data?.results) ? cmdHistData.data.results
@@ -928,7 +833,8 @@ const ReadersTab = () => {
   /* ── access levels for push-access modal ── */
   const { data: accLevelData } = useQuery({
     queryKey: ['acc-levels'],
-    queryFn:  () => apiService.get('/api/access-control/levels/'),
+    // No physical readers in a mobile-only deployment.
+    queryFn:  () => Promise.resolve({ data: [] }),
     enabled:  !!pushAccModal,
   });
   const accLevels = Array.isArray(accLevelData?.data) ? accLevelData.data : [];
@@ -946,7 +852,7 @@ const ReadersTab = () => {
 
   /* ── mutations ── */
   const sendCmd = useMutation({
-    mutationFn: ({ sn, cmd }) => apiService.post('/api/device/devcmd/', { sn, cmd }),
+    mutationFn: ({ sn, cmd }) => Promise.reject(new Error('Reader commands are not available in a mobile-only deployment')),
     onSuccess: () => { message.success('Command queued'); setCmdModal(null); setCmdValue(''); setCustomCmd(''); },
     onError: e => message.error(e?.message || 'Failed'),
   });
@@ -961,20 +867,20 @@ const ReadersTab = () => {
   });
 
   const registerMutation = useMutation({
-    mutationFn: (vals) => apiService.post('/api/device/terminals/', vals),
+    mutationFn: (vals) => Promise.reject(new Error('Readers are not used in a mobile-only deployment')),
     onSuccess: () => { message.success('Pre-registered'); qc.invalidateQueries({ queryKey: ['adms-terminals'] }); setAddModal(false); addForm.resetFields(); },
     onError: e => message.error(e?.message || 'Failed'),
   });
 
   const renameMutation = useMutation({
-    mutationFn: ({ id, alias, ip_address }) => apiService.put(`/api/device/terminals/${id}`, { alias, ip_address }),
+    mutationFn: ({ id, alias, ip_address }) => Promise.reject(new Error('Readers are not used in a mobile-only deployment')),
     onSuccess: () => { message.success('Updated'); qc.invalidateQueries({ queryKey: ['adms-terminals'] }); setEditModal(null); },
     onError: e => message.error(e?.message || 'Failed'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: ({ id, force = false }) =>
-      apiService.delete(`/api/device/terminals/${id}${force ? '?force=true' : ''}`),
+      Promise.resolve(null),
     onSuccess: () => { message.success('Removed'); qc.invalidateQueries({ queryKey: ['adms-terminals'] }); },
     onError: (e, vars) => {
       const detail = e?.message || 'Failed';
@@ -1119,7 +1025,7 @@ const ReadersTab = () => {
       },
     },
     {
-      title: 'Zone', key: 'zone', width: 200,
+      title: 'Warehouse', key: 'zone', width: 200,
       render: (_, r) => {
         const pending = pendingZoneAssign?.deviceId === r.id;
         if (pending) {
@@ -1561,7 +1467,7 @@ const ReadersTab = () => {
               },
               {
                 step: '04', color: '#059669',
-                title: 'Assign to a Zone',
+                title: 'Assign to a Warehouse',
                 desc: 'From the Readers table assign the reader to a zone. Punches update that zone\'s POB count in real time.',
               },
             ].map(s => (
@@ -1684,17 +1590,6 @@ const ReadersTab = () => {
         onChange={setActiveSubTab}
         size="small"
         items={[
-          {
-            key: 'readers',
-            label: (
-              <Space size={6}>
-                <ApiOutlined />
-                Registered Readers
-                {online > 0 && <Badge count={online} color="#10B981" size="small" />}
-              </Space>
-            ),
-            children: readersTab,
-          },
           {
             key: 'pending',
             label: (
@@ -2019,7 +1914,7 @@ const ReadersTab = () => {
           <Form.Item name="ip_address" label="Expected IP Address">
             <Input placeholder="e.g. 192.168.1.120" />
           </Form.Item>
-          <Form.Item name="zone_id" label="Assign to Zone">
+          <Form.Item name="zone_id" label="Assign to Warehouse">
             <Select placeholder="Select zone" allowClear showSearch optionFilterProp="label">
               {zones.map(z => (
                 <Select.Option key={z.id} value={z.id} label={z.name}>{z.name}</Select.Option>
@@ -2074,7 +1969,7 @@ const ReadersTab = () => {
 
 /* ── Main Component ────────────────────────────────────────────────────────── */
 
-/* ── Shared filter bar (used by Zone Cards + Zone List tabs) ──────────────── */
+/* ── Shared filter bar (used by Warehouse Cards + Warehouse List tabs) ──────────────── */
 const ZoneFilterBar = ({ typeFilter, setTypeFilter, statusFilter, setStatusFilter, hazardFilter, setHazardFilter, onClear }) => (
   <>
     <Select
@@ -2142,7 +2037,6 @@ function MusterPointsTab({ musterPoints, isLoading }) {
 
   const { data: activeEventsRaw } = useQuery({
     queryKey: ['muster-events-active'],
-    queryFn:  () => apiService.get('/api/mustering/events/?status=0'),
     refetchInterval: 10000,
   });
   const activeEvents   = Array.isArray(activeEventsRaw) ? activeEventsRaw : [];
@@ -2150,7 +2044,8 @@ function MusterPointsTab({ musterPoints, isLoading }) {
 
   const { data: termRaw } = useQuery({
     queryKey: ['adms-terminals'],
-    queryFn:  () => apiService.get('/api/device/terminals/'),
+    // No physical readers in a mobile-only deployment.
+    queryFn:  () => Promise.resolve({ data: [] }),
   });
   const terminals = Array.isArray(termRaw?.data) ? termRaw.data
                   : Array.isArray(termRaw) ? termRaw : [];
@@ -2506,7 +2401,7 @@ function MusterPointsTab({ musterPoints, isLoading }) {
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 0 }}>
             {[
               { icon: '1', color: '#7c3aed', bg: '#f3e8ff', title: 'Assign reader here', desc: 'Link a ZKTeco terminal to this muster point.' },
-              { icon: '2', color: '#0284c7', bg: '#e0f2fe', title: 'Emergency declared', desc: 'All POB personnel are flagged as MISSING. Zone occupancy counts reset to 0.' },
+              { icon: '2', color: '#0284c7', bg: '#e0f2fe', title: 'Emergency declared', desc: 'All POB personnel are flagged as MISSING. Warehouse occupancy counts reset to 0.' },
               { icon: '3', color: '#059669', bg: '#d1fae5', title: 'Staff scan at reader', desc: 'Each badge-scan marks that person as SAFE in the muster event log.' },
               { icon: '4', color: '#dc2626', bg: '#fee2e2', title: 'Unscanned = rescue', desc: 'Remaining MISSING persons show their last-known zone to guide rescue teams.' },
             ].map((step, i, arr) => (
@@ -2652,7 +2547,7 @@ const ZoneManagement = () => {
       ? apiService.put(`/api/v1/zones/${editingZone.id}/`, values)
       : apiService.post('/api/v1/zones/', values),
     onSuccess: () => {
-      message.success(editingZone ? 'Zone updated' : 'Zone created');
+      message.success(editingZone ? 'Warehouse updated' : 'Warehouse created');
       setIsModalOpen(false); setEditingZone(null); form.resetFields();
       queryClient.invalidateQueries({ queryKey: ['zones-dashboard'] });
     },
@@ -2661,16 +2556,16 @@ const ZoneManagement = () => {
 
   const deleteMutation = useMutation({
     mutationFn: ({ id, cascade = false }) =>
-      apiService.delete(`/api/v1/zones/${id}/${cascade ? '?cascade=true' : ''}`),
+      apiService.delete(`/api/v1/zones/${id}${cascade ? '?cascade=true' : ''}`),
     onSuccess: (res, { id }) => {
-      message.success(res?.message || 'Zone deleted');
+      message.success(res?.message || 'Warehouse deleted');
       if (detailZoneId === id) setDetailZoneId(null);
       queryClient.invalidateQueries({ queryKey: ['zones-dashboard'] });
     },
     onError: (err, vars) => {
       if (err?.message?.includes('sub-zone')) {
         Modal.confirm({
-          title: 'Zone has sub-zones',
+          title: 'Warehouse has sub-zones',
           icon: <ExclamationCircleOutlined style={{ color: '#faad14' }} />,
           content: (
             <div>
@@ -2752,7 +2647,7 @@ const ZoneManagement = () => {
   const patchStatusM = useMutation({
     mutationFn: ({ id, status }) => apiService.patch(`/api/v1/zones/${id}/status`, { status }),
     onSuccess: (_, vars) => {
-      message.success(`Zone status → ${vars.status.toLowerCase()}`);
+      message.success(`Warehouse status → ${vars.status.toLowerCase()}`);
       queryClient.invalidateQueries({ queryKey: ['zones-dashboard'] });
     },
     onError: err => message.error(err?.message || 'Status update failed'),
@@ -2764,7 +2659,7 @@ const ZoneManagement = () => {
       const n = data?.cleared_count ?? 0;
       message.success(n > 0
         ? `Occupancy reset. ${n} stale check-in${n !== 1 ? 's' : ''} cleared.`
-        : 'Zone occupancy reset to 0.');
+        : 'Warehouse occupancy reset to 0.');
       queryClient.invalidateQueries({ queryKey: ['zones-dashboard'] });
     },
     onError: err => message.error(err?.message || 'Reset failed'),
@@ -2840,7 +2735,7 @@ const ZoneManagement = () => {
         title={
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', overflow: 'visible' }}>
             <div>
-              <div style={{ fontWeight: 700, fontSize: 16 }}>Zone Management</div>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>Warehouse Management</div>
               <div style={{ fontSize: 12, color: '#64748b', fontWeight: 400, marginTop: 2 }}>
                 Real-time personnel tracking via ZKTeco ADMS readers over 4G
               </div>
@@ -2876,7 +2771,7 @@ const ZoneManagement = () => {
               </Button>
               <Button type="primary" icon={<PlusOutlined />} size="small" style={{ fontWeight: 600 }}
                 onClick={() => { setEditingZone(null); form.resetFields(); setIsModalOpen(true); }}>
-                New Zone
+                New Warehouse
               </Button>
             </Space>
           </div>
@@ -2887,8 +2782,8 @@ const ZoneManagement = () => {
         <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
           {[
             { label: 'Total Personnel On Board', value: totalPOB,            color: '#0078D4', icon: <TeamOutlined /> },
-            { label: 'Active Zones',              value: activeZones,         color: '#059669', icon: <CheckCircleOutlined /> },
-            { label: 'Zones',                     value: operationalZones,    color: '#374151', icon: <RadarChartOutlined /> },
+            { label: 'Active Warehouses',              value: activeZones,         color: '#059669', icon: <CheckCircleOutlined /> },
+            { label: 'Warehouses',                     value: operationalZones,    color: '#374151', icon: <RadarChartOutlined /> },
             { label: 'Muster Points',             value: musterPoints.length, color: '#10B981', icon: <SafetyOutlined /> },
             { label: 'ADMS Readers',              value: totalReaders,        color: '#6D28D9', icon: <ApiOutlined /> },
             { label: 'Alerts',                    value: alerts,              color: alerts > 0 ? '#DC2626' : '#94a3b8', icon: <AlertOutlined /> },
@@ -2969,7 +2864,7 @@ const ZoneManagement = () => {
             },
             {
               key: 'cards',
-              label: <Space size={5}><GlobalOutlined />Zones</Space>,
+              label: <Space size={5}><GlobalOutlined />Warehouses</Space>,
               children: (
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
@@ -3202,9 +3097,9 @@ const ZoneManagement = () => {
                     rowClassName={r => ['EMERGENCY','LOCKDOWN'].includes(r.status) ? 'zone-row-alert' : ''}
                     style={{ borderRadius: 0 }}
                     columns={[
-                      /* ── Zone name / code ── */
+                      /* ── Warehouse name / code ── */
                       {
-                        title: 'Zone', dataIndex: 'name', width: 220, fixed: 'left',
+                        title: 'Warehouse', dataIndex: 'name', width: 220, fixed: 'left',
                         sorter: (a, b) => a.name.localeCompare(b.name),
                         render: (name, rec) => {
                           const zs = getZoneStyle(rec.zone_type);
@@ -3425,7 +3320,7 @@ const ZoneManagement = () => {
                                 style={{ color: '#0078D4', width: 28, height: 28 }}
                               />
                             </Tooltip>
-                            <Tooltip title="Edit Zone">
+                            <Tooltip title="Edit Warehouse">
                               <Button
                                 size="small" type="text" icon={<EditOutlined />}
                                 onClick={() => handleEdit(record)}
@@ -3440,7 +3335,7 @@ const ZoneManagement = () => {
                               />
                             </Tooltip>
                             <Popconfirm
-                              title="Delete zone?"
+                              title="Delete warehouse?"
                               description="Permanently removes the zone and unassigns all readers."
                               onConfirm={() => deleteMutation.mutate({ id: record.id })}
                               okText="Delete" okButtonProps={{ danger: true }}
@@ -3464,32 +3359,6 @@ const ZoneManagement = () => {
               label: <Space size={5}><CompassOutlined />GPS Map</Space>,
               forceRender: true,
               children: <ZoneMapView zones={zones} />,
-            },
-            {
-              key: 'readers',
-              label: <Space size={5}><ApiOutlined />ADMS Readers</Space>,
-              children: <ReadersTab />,
-            },
-            {
-              key: 'muster-points',
-              label: (
-                <Space size={5}>
-                  <SafetyOutlined style={{ color: '#10B981' }} />
-                  <span>Muster Points</span>
-                  {musterPoints.length > 0 && (
-                    <span style={{ background: '#10B981', color: 'white', borderRadius: 10,
-                      padding: '0 6px', fontSize: 10.5, fontWeight: 700, lineHeight: '16px' }}>
-                      {musterPoints.length}
-                    </span>
-                  )}
-                </Space>
-              ),
-              children: (
-                <MusterPointsTab
-                  musterPoints={musterPoints}
-                  isLoading={dashLoading}
-                />
-              ),
             },
           ]}
         />
@@ -3516,13 +3385,13 @@ const ZoneManagement = () => {
         title={
           <Space>
             {editingZone ? <EditOutlined style={{ color: '#10B981' }} /> : <PlusOutlined style={{ color: '#0078D4' }} />}
-            {editingZone ? `Edit Zone — ${editingZone.name}` : 'Create New Zone'}
+            {editingZone ? `Edit Warehouse — ${editingZone.name}` : 'Create New Warehouse'}
           </Space>
         }
         open={isModalOpen}
         onOk={() => form.validateFields().then(saveMutation.mutate).catch(() => {})}
         onCancel={() => { setIsModalOpen(false); setEditingZone(null); form.resetFields(); }}
-        okText={editingZone ? 'Update Zone' : 'Create Zone'}
+        okText={editingZone ? 'Update Warehouse' : 'Create Warehouse'}
         confirmLoading={saveMutation.isPending}
         width={800} destroyOnHidden
       >
@@ -3539,19 +3408,19 @@ const ZoneManagement = () => {
         <Form form={form} layout="vertical" size="middle">
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="name" label="Zone Name" rules={[{ required: true }]}>
+              <Form.Item name="name" label="Warehouse Name" rules={[{ required: true }]}>
                 <Input placeholder="e.g. Bonga FPSO Platform" />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="code" label="Zone Code" rules={[{ required: true }]}>
+              <Form.Item name="code" label="Warehouse Code" rules={[{ required: true }]}>
                 <Input placeholder="e.g. OFF-BONGA-001" disabled={!!editingZone} />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={16}>
             <Col span={8}>
-              <Form.Item name="zone_type" label="Zone Type" initialValue="LOCATION" rules={[{ required: true }]}>
+              <Form.Item name="zone_type" label="Warehouse Type" initialValue="LOCATION" rules={[{ required: true }]}>
                 <Select showSearch optionFilterProp="children">
                   {Object.entries(ZONE_TYPE_LABELS)
                     .filter(([v]) => v !== 'MUSTER_POINT')
@@ -3631,13 +3500,13 @@ const ZoneManagement = () => {
             <Input placeholder="Full address or location description" />
           </Form.Item>
           <Form.Item name="description" label="Description">
-            <Input.TextArea rows={2} placeholder="Zone description and operational notes" />
+            <Input.TextArea rows={2} placeholder="Warehouse description and operational notes" />
           </Form.Item>
 
           <Divider style={{ margin: '8px 0' }} />
           <Row gutter={16}>
             <Col span={8}>
-              <Form.Item name="parent_zone_id" label="Parent Zone" tooltip="Makes this a sub-zone shown inside the parent on the POB Dashboard">
+              <Form.Item name="parent_zone_id" label="Parent Warehouse" tooltip="Makes this a sub-zone shown inside the parent on the POB Dashboard">
                 <Select placeholder="None (top-level)" allowClear showSearch optionFilterProp="label">
                   {(Array.isArray(allZonesForParent) ? allZonesForParent : [])
                     .filter(z => z.id !== editingZone?.id)
@@ -3718,7 +3587,7 @@ const ZoneManagement = () => {
         {/* ── Assign new doors ── */}
         <div style={{ fontWeight: 600, fontSize: 13, color: '#374151', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
           <PlusOutlined style={{ color: '#7C3AED' }} />
-          Add Doors to Zone
+          Add Doors to Warehouse
         </div>
         <div style={{
           background: 'linear-gradient(135deg,#F5F3FF,#EDE9FE)',

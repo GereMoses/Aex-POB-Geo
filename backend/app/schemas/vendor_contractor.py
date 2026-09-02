@@ -309,6 +309,39 @@ class ContractorCreate(BaseModel):
     notes: Optional[str] = Field(None, max_length=500, description="Additional notes")
 
 
+class ContractorUpdate(BaseModel):
+    """Request to update contractor — every field optional (PATCH-style PUT)"""
+    vendor_id: Optional[int] = Field(None, description="Vendor ID")
+    contractor_code: Optional[str] = Field(None, min_length=1, max_length=50, description="Contractor code")
+    first_name: Optional[str] = Field(None, min_length=1, max_length=100, description="First name")
+    last_name: Optional[str] = Field(None, min_length=1, max_length=100, description="Last name")
+    email: Optional[str] = Field(None, max_length=100, description="Email address")
+    phone: Optional[str] = Field(None, max_length=20, description="Phone number")
+
+    date_of_birth: Optional[datetime] = Field(None, description="Date of birth")
+    national_id: Optional[str] = Field(None, max_length=50, description="National ID")
+    passport_number: Optional[str] = Field(None, max_length=50, description="Passport number")
+    work_permit_number: Optional[str] = Field(None, max_length=50, description="Work permit number")
+    work_permit_expiry: Optional[datetime] = Field(None, description="Work permit expiry")
+
+    job_title: Optional[str] = Field(None, max_length=100, description="Job title")
+    specialization: Optional[str] = Field(None, max_length=100, description="Specialization")
+    experience_years: Optional[int] = Field(None, ge=0, description="Experience in years")
+    hourly_rate: Optional[float] = Field(None, ge=0, description="Hourly rate")
+    daily_rate: Optional[float] = Field(None, ge=0, description="Daily rate")
+    currency: Optional[str] = Field(None, max_length=3, description="Currency")
+
+    skills: Optional[List[str]] = Field(None, description="Skills")
+    certifications: Optional[List[Dict[str, Any]]] = Field(None, description="Certifications")
+    security_clearance: Optional[str] = Field(None, max_length=50, description="Security clearance")
+
+    status: Optional[str] = Field(None, max_length=20, description="Contractor status")
+    availability_status: Optional[str] = Field(None, max_length=20, description="Availability status")
+    preferred_work_locations: Optional[List[str]] = Field(None, description="Preferred work locations")
+
+    notes: Optional[str] = Field(None, max_length=500, description="Additional notes")
+
+
 class ContractorResponse(BaseModel):
     """Contractor response model"""
     id: int

@@ -12,8 +12,10 @@ Calculation logic mirrors BioTime 9.5:
 """
 import asyncio
 import logging
+from zoneinfo import ZoneInfo
+from ..core.config import settings
 import datetime as dt
-from datetime import datetime, timedelta, time, date
+from datetime import datetime, timedelta, time, date, timezone
 from typing import List, Dict, Any, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -27,6 +29,9 @@ STATUS_LATE    = 1
 STATUS_EARLY   = 2
 STATUS_ABSENT  = 3
 STATUS_LEAVE   = 4
+# Present, but on a day the employee was not rostered. Distinguished from
+# STATUS_PRESENT so payroll can decide how to treat unrostered time.
+STATUS_UNSCHEDULED = 5
 
 DIR_IN  = 'in'
 DIR_OUT = 'out'
@@ -59,13 +64,36 @@ def _to_time(val) -> Optional[time]:
     return val
 
 
+def _local_tz():
+    """The operating timezone, falling back to UTC if it is misconfigured."""
+    try:
+        return ZoneInfo(settings.TIMEZONE)
+    except Exception:
+        logger.warning("TIMEZONE %r is not a valid zone — falling back to UTC",
+                       settings.TIMEZONE)
+        return timezone.utc
+
+
 def _naive(ts) -> Optional[datetime]:
-    """Strip timezone from a datetime."""
+    """
+    Convert an instant to LOCAL wall-clock, then drop the offset.
+
+    Punches are stored as UTC instants; shift start/end times are entered by an
+    administrator as local wall-clock. Stripping the offset without converting
+    compared the two in different frames — in Lagos (UTC+1) every employee read
+    an hour early, so lateness was systematically under-reported.
+    """
     if ts is None:
         return None
-    if hasattr(ts, 'tzinfo') and ts.tzinfo is not None:
-        return ts.replace(tzinfo=None)
+    if getattr(ts, "tzinfo", None) is not None:
+        return ts.astimezone(_local_tz()).replace(tzinfo=None)
     return ts
+
+
+def _local_date(ts):
+    """The business date a punch belongs to, in local terms."""
+    n = _naive(ts)
+    return n.date() if n else None
 
 
 def _t2m(t: time) -> int:
@@ -428,10 +456,10 @@ class AttendanceCalculationService:
             FROM iclock_transaction t
             LEFT JOIN iclock_terminal term ON term.sn = t.terminal_sn
             WHERE t.emp_code = :emp_code
-              AND t.punch_time::date BETWEEN :start_date AND :end_date
+              AND (t.punch_time AT TIME ZONE :tz)::date BETWEEN :start_date AND :end_date
               AND COALESCE(NULLIF(term.reader_purpose, ''), 'ATTENDANCE') = 'ATTENDANCE'
             ORDER BY t.punch_time
-        """), {"emp_code": emp_code, "start_date": start_dt,
+        """), {"emp_code": emp_code, "tz": settings.TIMEZONE, "start_date": start_dt,
                # +1 day: an overnight shift starting on end_dt clocks out the
                # following morning, so that punch must be in the fetch window or
                # the last night of the range computes as zero hours.
@@ -439,7 +467,9 @@ class AttendanceCalculationService:
 
         punches_by_date: Dict[date, list] = {}
         for p in punch_rows:
-            d = p.punch_time.date()
+            # Local date: a 00:30 WAT punch is 23:30 UTC the previous day, and
+            # bucketing by the UTC date puts a night shift on the wrong day.
+            d = _local_date(p.punch_time)
             punches_by_date.setdefault(d, []).append(p)
 
         # Use pre-fetched ID when available (injected by batch caller); fall back to query
@@ -483,6 +513,15 @@ class AttendanceCalculationService:
         while cur <= end_dt:
             sched = _schedule_for_day(schedules, cur) or fallback_sched
             if not sched:
+                # No roster for this day. Skipping outright means an estate with
+                # no shifts configured produces NO attendance at all while the
+                # API still reports success — which is exactly how this went
+                # unnoticed. Record what actually happened instead: real
+                # check-in/out and worked minutes, with no lateness or overtime,
+                # because without a schedule there is nothing to be late against.
+                self._record_unscheduled_day(
+                    db, pe_id, cur, dept_id,
+                    punches_by_date.get(cur, []), consumed_overnight)
                 cur += timedelta(days=1)
                 continue
 
@@ -629,6 +668,50 @@ class AttendanceCalculationService:
                 "sched_mins":   sched_mins,
             })
             cur += timedelta(days=1)
+
+    @staticmethod
+    def _record_unscheduled_day(db, pe_id, day, dept_id, day_punches, consumed):
+        """
+        Write an attendance row for a day the employee was not rostered.
+
+        Worked time is first-IN to last-OUT. Lateness, early leave and overtime
+        are left at zero and scheduled_minutes at 0 — they are meaningless with
+        no shift to measure against, and inventing them would be worse than
+        reporting none. att_status 'UNSCHEDULED' distinguishes these rows so a
+        payroll run can decide how to treat them.
+        """
+        usable = [p for p in day_punches if p.punch_time not in consumed]
+        if not usable:
+            return
+
+        times = sorted(p.punch_time for p in usable)
+        check_in = times[0]
+        check_out = times[-1] if len(times) > 1 else None
+        work_mins = int((check_out - check_in).total_seconds() // 60) if check_out else 0
+
+        db.execute(text("""
+            INSERT INTO att_report
+                (emp_id, att_date, shift_id, timetable_id, check_in, check_out,
+                 work_minutes, late_minutes, early_minutes,
+                 ot_minutes, overtime_minutes,
+                 att_status, area_compliance, department_id, scheduled_minutes)
+            VALUES
+                (:emp_id, :att_date, NULL, NULL, :check_in, :check_out,
+                 :work_mins, 0, 0, 0, 0,
+                 :att_status, true, :dept_id, 0)
+            ON CONFLICT (emp_id, att_date) DO UPDATE SET
+                check_in          = EXCLUDED.check_in,
+                check_out         = EXCLUDED.check_out,
+                work_minutes      = EXCLUDED.work_minutes,
+                att_status        = EXCLUDED.att_status,
+                department_id     = EXCLUDED.department_id,
+                updated_at        = CURRENT_TIMESTAMP
+        """), {
+            "emp_id": pe_id, "att_date": day,
+            "check_in": check_in, "check_out": check_out,
+            "work_mins": work_mins, "dept_id": dept_id,
+            "att_status": STATUS_UNSCHEDULED,
+        })
 
     @staticmethod
     def _shift_midpoint(shift_start: Optional[time], shift_end: Optional[time]) -> Optional[time]:

@@ -208,7 +208,11 @@ async def production_login(
             SELECT id, username, email, password, is_active, is_superuser,
                    COALESCE(is_global_admin, FALSE) AS is_global_admin
             FROM auth_user
-            WHERE username = :username OR email = :username
+            -- Case-insensitive: staff sign in with their employee code and
+            -- should not have to reproduce its exact capitalisation
+            -- (CL001 vs cl001). /settings/users already lowercases every
+            -- username it stores, so this cannot widen a match.
+            WHERE LOWER(username) = LOWER(:username) OR LOWER(email) = LOWER(:username)
         """)
 
         result = db.execute(query, {"username": form_data.username})
@@ -314,7 +318,11 @@ async def simple_login(
             SELECT id, username, email, password, is_active, is_superuser,
                    COALESCE(is_global_admin, FALSE) AS is_global_admin
             FROM auth_user
-            WHERE username = :username OR email = :username
+            -- Case-insensitive: staff sign in with their employee code and
+            -- should not have to reproduce its exact capitalisation
+            -- (CL001 vs cl001). /settings/users already lowercases every
+            -- username it stores, so this cannot widen a match.
+            WHERE LOWER(username) = LOWER(:username) OR LOWER(email) = LOWER(:username)
         """)
 
         result = db.execute(query, {"username": form_data.username})
@@ -393,7 +401,11 @@ async def login(
             SELECT id, username, email, password, is_active, is_superuser,
                    first_name, last_name, COALESCE(is_global_admin, FALSE) AS is_global_admin
             FROM auth_user
-            WHERE username = :username OR email = :username
+            -- Case-insensitive: staff sign in with their employee code and
+            -- should not have to reproduce its exact capitalisation
+            -- (CL001 vs cl001). /settings/users already lowercases every
+            -- username it stores, so this cannot widen a match.
+            WHERE LOWER(username) = LOWER(:username) OR LOWER(email) = LOWER(:username)
         """)
         
         result = db.execute(query, {"username": form_data.username})
@@ -431,7 +443,7 @@ async def login(
         timeout_mins = _get_session_timeout(db)
         access_token_expires = timedelta(minutes=timeout_mins)
         access_token = create_access_token(
-            data={"sub": email}, expires_delta=access_token_expires
+            data={"sub": username}, expires_delta=access_token_expires
         )
 
         # Track session (with jti) so it appears in Active Sessions and is revocable.

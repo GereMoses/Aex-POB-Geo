@@ -28,8 +28,6 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import apiService from '../../../services/api';
-import PersonnelMTDPanel from './PersonnelMTDPanel';
-import PersonnelBiometricPanel from './PersonnelBiometricPanel';
 
 dayjs.extend(relativeTime);
 
@@ -101,8 +99,8 @@ const OverviewTab = ({ rec, zoneMap }) => (
       <Descriptions.Item label="Department">{rec.department || <Text type="secondary">—</Text>}</Descriptions.Item>
       <Descriptions.Item label="Role">{rec.role || <Text type="secondary">—</Text>}</Descriptions.Item>
       <Descriptions.Item label="Position">{rec.position || <Text type="secondary">—</Text>}</Descriptions.Item>
-      <Descriptions.Item label="Zone">
-        {rec.current_zone_id ? (zoneMap.get(rec.current_zone_id) || `Zone #${rec.current_zone_id}`) : <Text type="secondary">—</Text>}
+      <Descriptions.Item label="Warehouse">
+        {rec.current_zone_id ? (zoneMap.get(rec.current_zone_id) || `Warehouse #${rec.current_zone_id}`) : <Text type="secondary">—</Text>}
       </Descriptions.Item>
     </Descriptions>
 
@@ -580,25 +578,6 @@ const EmployeeDrawer = ({ open, record: rec, onClose, onEdit, onRefresh, zoneMap
       children: activeTab === 'status_history' ? <StatusHistoryTab personnelId={rec.id} /> : null,
     },
     {
-      key: 'mtd',
-      label: (
-        <Space size={4}>
-          <AlertOutlined />MTD
-        </Space>
-      ),
-      children: <PersonnelMTDPanel empId={rec.id} />,
-    },
-    {
-      key: 'biotime',
-      label: (
-        <Space size={4}>
-          <ScanOutlined />Biometrics
-          {rec.biometric_enrolled ? <Badge dot status="success" /> : <Badge dot status="default" />}
-        </Space>
-      ),
-      children: activeTab === 'biotime' ? <PersonnelBiometricPanel empCode={rec.emp_code} personnelId={rec.id} /> : null,
-    },
-    {
       key: 'activity',
       label: <><ThunderboltOutlined /> Activity</>,
       children: activeTab === 'activity' ? <ActivityTab personnelId={rec.id} empCode={rec.emp_code} /> : null,
@@ -735,7 +714,7 @@ const EmployeeDrawer = ({ open, record: rec, onClose, onEdit, onRefresh, zoneMap
             { label: 'Blood Group', value: rec.blood_group || '—', color: '#f87171' },
             { label: 'Last Seen', value: rec.last_seen ? dayjs(rec.last_seen).fromNow() : '—', color: '#94a3b8' },
             { label: 'Since', value: rec.hire_date ? dayjs(rec.hire_date).format('MMM YYYY') : '—', color: '#94a3b8' },
-            { label: 'Zone', value: rec.current_zone_id ? (zoneMap.get(rec.current_zone_id) || `#${rec.current_zone_id}`) : '—', color: '#7dd3fc' },
+            { label: 'Warehouse', value: rec.current_zone_id ? (zoneMap.get(rec.current_zone_id) || `#${rec.current_zone_id}`) : '—', color: '#7dd3fc' },
           ].map(({ label, value, color }) => (
             <div key={label} style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em' }}>{label}</div>

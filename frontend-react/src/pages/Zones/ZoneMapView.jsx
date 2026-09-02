@@ -34,7 +34,7 @@ const TILE_LAYERS = {
   },
 };
 
-/* ── Zone type colour map (matches ZoneManagement.jsx) ───────────────────── */
+/* ── Warehouse type colour map (matches ZoneManagement.jsx) ───────────────────── */
 const ZONE_COLOR = {
   LOCATION:     '#10B981', MUSTER_POINT: '#10B981', WORK_AREA:    '#EF4444',
   OUTSIDE:      '#6B7280', TRANSIT:      '#0EA5E9', RESTRICTED:   '#7C3AED',
@@ -318,7 +318,7 @@ const SelectedPanel = ({ zone, onClose }) => {
 
   return (
     <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', background: '#0F1927' }}>
-      {/* Zone header */}
+      {/* Warehouse header */}
       <div style={{
         background: `linear-gradient(135deg, ${color}28, ${color}12)`,
         borderTop: `2px solid ${color}`,
@@ -470,7 +470,7 @@ const ZoneMapView = ({ zones }) => {
         }}>
           <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
             {[
-              { label: 'TOTAL POB',   value: totalPOB,      color: '#0078D4', bg: 'rgba(0,120,212,0.15)' },
+              { label: 'TOTAL ON SITE',   value: totalPOB,      color: '#0078D4', bg: 'rgba(0,120,212,0.15)' },
               { label: 'ON MAP',      value: geoZones.length,color: '#10B981', bg: 'rgba(16,185,129,0.12)' },
               { label: alertCount > 0 ? 'ALERTS' : 'ACTIVE', value: alertCount > 0 ? alertCount : activeCount, color: alertCount > 0 ? '#EF4444' : '#10B981', bg: alertCount > 0 ? 'rgba(239,68,68,0.12)' : 'rgba(16,185,129,0.12)' },
             ].map(s => (
@@ -488,7 +488,7 @@ const ZoneMapView = ({ zones }) => {
           <Input
             size="small"
             prefix={<SearchOutlined style={{ color: '#475569' }} />}
-            placeholder="Search zones…"
+            placeholder="Search warehouses…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             allowClear
@@ -499,7 +499,7 @@ const ZoneMapView = ({ zones }) => {
           />
         </div>
 
-        {/* Zone list */}
+        {/* Warehouse list */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 8px 6px' }} className="map-sidebar-scroll">
           {filtered.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '24px 0', color: '#475569', fontSize: 12 }}>

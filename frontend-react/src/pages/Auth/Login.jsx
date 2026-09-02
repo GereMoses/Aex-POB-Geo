@@ -9,7 +9,7 @@ import {
 /* ─── Feature list shown in the left panel ─────────────── */
 const FEATURES = [
   { icon: <TeamOutlined />,      label: 'Personnel On Board Management' },
-  { icon: <SafetyOutlined />,    label: 'Access Control & Biometrics'   },
+  { icon: <SafetyOutlined />,    label: 'Location-Verified Attendance'   },
   { icon: <AlertOutlined />,     label: 'Emergency Response System'      },
   { icon: <ApartmentOutlined />, label: 'Department & Role Management'   },
   { icon: <DashboardOutlined />, label: 'Real-time Analytics Dashboard'  },
@@ -197,7 +197,7 @@ const Login = ({ onLogin }) => {
               justifyContent: 'center',
             }}>
               <img
-                src="/logo/apex-pob.png"
+                src={`${process.env.PUBLIC_URL || ''}/logo/apex-mark.png`}
                 alt="Apex POB"
                 style={{ height: 44, width: 'auto', display: 'block' }}
               />
@@ -342,18 +342,18 @@ const Login = ({ onLogin }) => {
             borderRadius: '0 0 4px 4px',
           }} />
 
-          {/* Marconi logo + welcome text */}
+          {/* Apex logo + welcome text */}
           <div style={{ textAlign: 'center', marginBottom: 28, marginTop: 8 }}>
             <div style={{
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               marginBottom: 18,
             }}>
               <img
-                src="/logo/image.png"
-                alt="Marconi.ng EPC Limited"
+                src={`${process.env.PUBLIC_URL || ''}/logo/apex-mark.png`}
+                alt="Apex POB"
                 style={{
                   height: 72, width: 'auto',
-                  filter: 'drop-shadow(0 4px 12px rgba(0,120,60,0.18))',
+                  filter: 'drop-shadow(0 4px 12px rgba(15,23,42,0.18))',
                 }}
               />
             </div>
@@ -529,7 +529,7 @@ const Login = ({ onLogin }) => {
             © {year} Apex POB · All rights reserved
           </div>
           <div style={{ fontSize: 11, marginTop: 4 }}>
-            <span style={{ color: '#cbd5e1' }}>Apex POB v2.0 · Deployed for Marconi.ng EPC Limited</span>
+            <span style={{ color: '#cbd5e1' }}>Apex POB v2.0</span>
           </div>
         </div>
       </div>

@@ -1,0 +1,76 @@
+# Reproducible Android build for Apex Clock.
+#
+# Everything the build needs is here, so an APK can be produced without an
+# Android SDK on the developer's machine — and without their local JDK version
+# deciding whether it works.
+#
+#   docker build -f Dockerfile.build -t apex-clock-build ..
+#   docker run --rm -v "$PWD/dist:/out" apex-clock-build
+#
+# The APK lands in dist/.
+FROM eclipse-temurin:21-jdk
+
+ENV ANDROID_SDK_ROOT=/opt/android-sdk \
+    ANDROID_HOME=/opt/android-sdk \
+    DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update -qq \
+ && apt-get install -y -qq curl unzip git python3 \
+ && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y -qq nodejs \
+ && rm -rf /var/lib/apt/lists/*
+
+# Capacitor 7's plugins target Java 21; an older JDK fails during dependency
+# resolution with an unhelpful "no locally installed toolchains match".
+
+# The SDK download is several hundred megabytes and had been failing partway
+# through (curl exit 56). Split into separate layers with retries so a network
+# blip costs one step rather than the whole image, and so a rebuild resumes
+# from the layer cache instead of starting again.
+RUN mkdir -p $ANDROID_SDK_ROOT/cmdline-tools \
+ && curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+      -o /tmp/cmdline.zip \
+      https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+ && unzip -q /tmp/cmdline.zip -d $ANDROID_SDK_ROOT/cmdline-tools \
+ && mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools/latest \
+ && rm -f /tmp/cmdline.zip
+
+ENV PATH="${PATH}:/opt/android-sdk/cmdline-tools/latest/bin"
+
+# `yes |` closes the pipe early once sdkmanager stops reading, which surfaces as
+# a spurious failure under `set -o pipefail`; the exit status is ignored on
+# purpose and the install step below is what actually has to succeed.
+RUN yes 2>/dev/null | sdkmanager --licenses > /dev/null 2>&1 || true
+
+RUN sdkmanager --install "platform-tools" > /dev/null
+RUN sdkmanager --install "platforms;android-35" > /dev/null
+RUN sdkmanager --install "build-tools;35.0.0" > /dev/null
+# The Android Gradle Plugin resolves this at build time; pre-installing it keeps
+# the build offline-capable after the image is made.
+RUN sdkmanager --install "build-tools;34.0.0" > /dev/null
+
+# Address the packaged app talks to. Must be HTTPS: location and camera
+# are only available in a secure context.
+ARG APEX_API_BASE=""
+ENV APEX_API_BASE=${APEX_API_BASE}
+
+# A fixed debug keystore, copied in from the repository.
+#
+# Generating one in the image would be stable only until the layer cache is
+# invalidated; after that every rebuild produces a different signing key and
+# `adb install -r` fails with INSTALL_FAILED_UPDATE_INCOMPATIBLE, forcing an
+# uninstall that throws away the app's data and granted permissions.
+#
+# A debug keystore is not a secret — the one the Android SDK ships is identical
+# on every machine in the world. The release signing key is a different matter
+# and must never live here.
+RUN mkdir -p /root/.android
+COPY mobile-app/keystore/debug.keystore /root/.android/debug.keystore
+
+WORKDIR /src
+COPY mobile-app /src/mobile-app
+COPY backend/app/static/clock /src/backend/app/static/clock
+COPY mobile-app/scripts/build-android.sh /usr/local/bin/build-android
+RUN chmod +x /usr/local/bin/build-android
+
+CMD ["build-android"]

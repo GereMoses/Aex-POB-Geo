@@ -4,12 +4,12 @@ import { PrinterOutlined, DownloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 
 /* ────────────────────────────────────────────────────────────
-   MarconiLogo — uses the actual company logo from /logo/image.png
+   ApexLogo — uses the product logo from /logo/apex-mark.png
 ──────────────────────────────────────────────────────────── */
-const MarconiLogo = ({ size = 80 }) => (
+const ApexLogo = ({ size = 80 }) => (
   <img
-    src="/logo/image.png"
-    alt="Marconi.ng EPC Limited"
+    src={`${process.env.PUBLIC_URL || ''}/logo/apex-mark.png`}
+    alt="Apex POB"
     style={{ width: size, height: size, objectFit: 'contain' }}
     crossOrigin="anonymous"
   />
@@ -122,10 +122,10 @@ const CertificateTemplate = ({ enrollment }) => {
             {/* Header */}
             <div style={styles.header}>
               <div style={styles.logoArea}>
-                <MarconiLogo size={72} />
+                <ApexLogo size={72} />
               </div>
               <div style={styles.headerText}>
-                <div style={styles.companyName}>MARCONI.NG EPC LIMITED</div>
+                <div style={styles.companyName}>APEX POB</div>
                 <div style={styles.companyTagline}>Offshore Personnel On Board Management System</div>
                 <div style={styles.dividerLine} />
                 <div style={styles.certTitle}>Certificate of Training Completion</div>
@@ -197,7 +197,7 @@ const CertificateTemplate = ({ enrollment }) => {
 
             {/* Bottom strip */}
             <div style={styles.bottomStrip}>
-              <span>Apex POB — Marconi.ng EPC Limited</span>
+              <span>Apex POB</span>
               <span style={{ margin: '0 12px' }}>•</span>
               <span>Oil &amp; Gas Personnel Training Record</span>
               <span style={{ margin: '0 12px' }}>•</span>

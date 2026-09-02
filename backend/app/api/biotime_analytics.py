@@ -12,7 +12,6 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 
 from ..core.database import get_db
-from ..services.biotime_sync_service import biotime_sync_service
 from ..models.personnel import Personnel, AttendanceLog
 from ..models.biotime_models import IClockTransaction, IClockTerminal
 
@@ -20,7 +19,6 @@ router = APIRouter()
 
 VERIFY_TYPE_MAP = {0: 'password', 1: 'fingerprint', 2: 'face', 3: 'card'}
 PUNCH_STATE_MAP = {0: 'check_in', 1: 'check_out', 2: 'break_out', 3: 'break_in'}
-
 
 # ─── Performance Analytics ────────────────────────────────────────────────────
 
@@ -97,7 +95,6 @@ async def get_verification_performance_metrics(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get verification metrics: {str(e)}")
 
-
 @router.get("/performance/sync-metrics")
 async def get_sync_performance_metrics(
     days: int = Query(7, ge=1, le=90, description="Number of days for sync metrics"),
@@ -105,7 +102,8 @@ async def get_sync_performance_metrics(
 ) -> Dict[str, Any]:
     """Synchronisation performance from the BioTime sync service."""
     try:
-        sync_status = await biotime_sync_service.get_sync_status()
+        # No device synchronisation in a mobile-only deployment.
+        sync_status: Dict[str, Any] = {}
         total_synced = sync_status.get("total_synced", 0)
         error_count = sync_status.get("sync_status", {}).get("error_count", 0)
         if not isinstance(error_count, int):
@@ -128,169 +126,7 @@ async def get_sync_performance_metrics(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get sync metrics: {str(e)}")
 
-
 # ─── Usage Analytics ──────────────────────────────────────────────────────────
-
-@router.get("/usage/biometric-templates")
-async def get_biometric_template_usage(
-    days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """Biometric template enrollment statistics."""
-    try:
-        cutoff = datetime.utcnow() - timedelta(days=days)
-
-        total_personnel = db.query(func.count(Personnel.id)).scalar() or 0
-        enrolled = db.query(func.count(Personnel.id)).filter(
-            Personnel.biometric_enrolled == True
-        ).scalar() or 0
-        recently_enrolled = db.query(func.count(Personnel.id)).filter(
-            Personnel.biometric_enrolled == True,
-            Personnel.updated_at >= cutoff,
-        ).scalar() or 0
-
-        # Count fingerprint vs face templates from JSON columns
-        fp_count = db.query(func.count(Personnel.id)).filter(
-            Personnel.biometric_enrolled == True,
-            Personnel.fingerprint_templates.isnot(None),
-        ).scalar() or 0
-        face_count = db.query(func.count(Personnel.id)).filter(
-            Personnel.biometric_enrolled == True,
-            Personnel.face_template.isnot(None),
-        ).scalar() or 0
-
-        return {
-            "success": True,
-            "period_days": days,
-            "total_personnel": total_personnel,
-            "enrolled_count": enrolled,
-            "enrollment_rate": round((enrolled / total_personnel) * 100, 2) if total_personnel > 0 else 0,
-            "recently_enrolled": recently_enrolled,
-            "biometric_distribution": {
-                "fingerprint": fp_count,
-                "face": face_count,
-                "both": min(fp_count, face_count),
-                "total_enrolled": enrolled,
-            },
-            "generated_at": datetime.utcnow().isoformat(),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get biometric template usage: {str(e)}")
-
-
-@router.get("/usage/device-activity")
-async def get_device_activity_analytics(
-    days: int = Query(7, ge=1, le=90),
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """Per-device punch counts and verification method breakdown from IClockTransaction."""
-    try:
-        cutoff = datetime.utcnow() - timedelta(days=days)
-
-        # Aggregate per terminal_sn
-        device_rows = (
-            db.query(
-                IClockTransaction.terminal_sn,
-                func.count(IClockTransaction.id).label('punch_count'),
-                func.min(IClockTransaction.punch_time).label('first_seen'),
-                func.max(IClockTransaction.punch_time).label('last_seen'),
-                func.count(distinct(IClockTransaction.emp_code)).label('unique_employees'),
-            )
-            .filter(IClockTransaction.punch_time >= cutoff)
-            .group_by(IClockTransaction.terminal_sn)
-            .order_by(func.count(IClockTransaction.id).desc())
-            .all()
-        )
-
-        total_records = db.query(func.count(IClockTransaction.id)).filter(
-            IClockTransaction.punch_time >= cutoff
-        ).scalar() or 0
-
-        # Enrich with terminal alias where available
-        terminal_aliases: Dict[str, str] = {}
-        for t in db.query(IClockTerminal.sn, IClockTerminal.alias).all():
-            terminal_aliases[t.sn] = t.alias or t.sn
-
-        device_usage = []
-        for row in device_rows:
-            sn = row.terminal_sn or 'unknown'
-            device_usage.append({
-                "terminal_sn": sn,
-                "name": terminal_aliases.get(sn, sn),
-                "punch_count": row.punch_count,
-                "unique_employees": row.unique_employees,
-                "first_seen": row.first_seen.isoformat() if row.first_seen else None,
-                "last_seen": row.last_seen.isoformat() if row.last_seen else None,
-            })
-
-        return {
-            "success": True,
-            "period_days": days,
-            "total_attendance_records": total_records,
-            "device_count": len(device_usage),
-            "most_active_device": device_usage[0]["terminal_sn"] if device_usage else None,
-            "device_usage": device_usage,
-            "generated_at": datetime.utcnow().isoformat(),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get device activity analytics: {str(e)}")
-
-
-# ─── Compliance Reports ───────────────────────────────────────────────────────
-
-@router.get("/compliance/biometric-quality")
-async def get_biometric_quality_compliance(
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """Biometric enrollment quality report based on template presence."""
-    try:
-        total = db.query(func.count(Personnel.id)).scalar() or 0
-        enrolled = db.query(func.count(Personnel.id)).filter(Personnel.biometric_enrolled == True).scalar() or 0
-        both = db.query(func.count(Personnel.id)).filter(
-            Personnel.biometric_enrolled == True,
-            Personnel.fingerprint_templates.isnot(None),
-            Personnel.face_template.isnot(None),
-        ).scalar() or 0
-        fp_only = db.query(func.count(Personnel.id)).filter(
-            Personnel.biometric_enrolled == True,
-            Personnel.fingerprint_templates.isnot(None),
-            Personnel.face_template.is_(None),
-        ).scalar() or 0
-        face_only = db.query(func.count(Personnel.id)).filter(
-            Personnel.biometric_enrolled == True,
-            Personnel.fingerprint_templates.is_(None),
-            Personnel.face_template.isnot(None),
-        ).scalar() or 0
-
-        not_enrolled = total - enrolled
-        compliance_rate = round((enrolled / total) * 100, 2) if total > 0 else 0
-
-        recommendations = []
-        if not_enrolled > 0:
-            recommendations.append(f"{not_enrolled} personnel have no biometric data enrolled")
-        if compliance_rate < 80:
-            recommendations.append("Enrollment rate below 80% — schedule biometric enrollment drives")
-        if both == 0 and enrolled > 0:
-            recommendations.append("No personnel have both fingerprint and face templates — consider dual-modality enrollment")
-
-        return {
-            "success": True,
-            "total_personnel": total,
-            "enrolled_count": enrolled,
-            "not_enrolled": not_enrolled,
-            "quality_distribution": {
-                "both_modalities": both,
-                "fingerprint_only": fp_only,
-                "face_only": face_only,
-                "not_enrolled": not_enrolled,
-            },
-            "compliance_rate": compliance_rate,
-            "recommendations": recommendations,
-            "generated_at": datetime.utcnow().isoformat(),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get biometric quality compliance: {str(e)}")
-
 
 @router.get("/compliance/usage-trends")
 async def get_usage_trends_compliance(
@@ -339,7 +175,6 @@ async def get_usage_trends_compliance(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get usage trends: {str(e)}")
 
-
 # ─── Comprehensive Dashboard ──────────────────────────────────────────────────
 
 @router.get("/dashboard")
@@ -348,7 +183,8 @@ async def get_biotime_analytics_dashboard(
 ) -> Dict[str, Any]:
     """Composite BioTime analytics dashboard — all key metrics in one call."""
     try:
-        sync_status = await biotime_sync_service.get_sync_status()
+        # No device synchronisation in a mobile-only deployment.
+        sync_status: Dict[str, Any] = {}
 
         total_personnel = db.query(func.count(Personnel.id)).scalar() or 0
         biometric_enrolled = db.query(func.count(Personnel.id)).filter(

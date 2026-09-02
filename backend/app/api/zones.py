@@ -18,10 +18,11 @@ from ..models.zone import Zone, ZonePersonnelAssignment
 from ..models.biotime_models import PersonnelArea as BioTimeArea
 from ..core.websocket import zone_ws_connect, zone_ws_disconnect, broadcast_zone_update
 
+from ..core.config import settings
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
 
 ZONE_TYPE_LABELS = {
     "LOCATION": "Location",
@@ -61,7 +62,6 @@ HAZARD_COLORS = {
     "HIGH": "error",
     "CRITICAL": "error",
 }
-
 
 def _to_dict(zone: Zone, db: Session) -> dict:
     assigned_count = db.query(ZonePersonnelAssignment).filter(
@@ -108,7 +108,6 @@ def _to_dict(zone: Zone, db: Session) -> dict:
         "updated_at": zone.updated_at.isoformat() if zone.updated_at else None,
     }
 
-
 # ── Static routes BEFORE /{zone_id} ──────────────────────────────────────────
 
 @router.get("/meta/summary")
@@ -148,49 +147,9 @@ def get_summary(db: Session = Depends(get_db), _=Depends(get_current_user)):
         "by_hazard": by_hazard,
     }
 
-
-@router.get("/meta/zkteco-compare")
-def zkteco_compare(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    zones = db.query(Zone).filter(Zone.is_active == True).all()
-    bt_areas = db.query(BioTimeArea).all()
-
-    bt_codes = {(a.area_code or "").upper() for a in bt_areas}
-    bt_names = {(a.area_name or "").upper() for a in bt_areas}
-
-    matched, local_only = [], []
-    for z in zones:
-        code_match = z.code.upper() in bt_codes
-        name_match = z.name.upper() in bt_names
-        if code_match or name_match:
-            matched.append({
-                "zone_id": z.id, "zone_name": z.name, "zone_code": z.code,
-                "code_match": code_match, "name_match": name_match,
-            })
-        else:
-            local_only.append({"zone_id": z.id, "zone_name": z.name, "zone_code": z.code})
-
-    zone_codes = {z.code.upper() for z in zones}
-    zone_names = {z.name.upper() for z in zones}
-    bt_only = [
-        {"area_id": a.id, "area_name": a.area_name, "area_code": a.area_code}
-        for a in bt_areas
-        if (a.area_code or "").upper() not in zone_codes and (a.area_name or "").upper() not in zone_names
-    ]
-
-    return {
-        "matched": matched,
-        "local_only": local_only,
-        "biotime_only": bt_only,
-        "total_local": len(zones),
-        "total_biotime": len(bt_areas),
-        "total_matched": len(matched),
-    }
-
-
 @router.get("/types")
 def get_zone_types(_=Depends(get_current_user)):
     return [{"value": k, "label": v} for k, v in ZONE_TYPE_LABELS.items()]
-
 
 @router.get("/statuses")
 def get_zone_statuses(_=Depends(get_current_user)):
@@ -201,7 +160,6 @@ def get_zone_statuses(_=Depends(get_current_user)):
         {"value": "EMERGENCY", "label": "Emergency"},
         {"value": "LOCKDOWN", "label": "Lockdown"},
     ]
-
 
 def _muster_occupancy_context(db: Session):
     """During an active muster/drill, zone occupancy must reflect evacuation:
@@ -233,7 +191,6 @@ def _muster_occupancy_context(db: Session):
         safe_by_zone[r.zid] = r.cnt
     return safe_codes, safe_by_zone, True
 
-
 def _live_zone_occupancy(db: Session):
     """Per-zone live occupancy {zone_id: count}, muster-aware. The single source of
     truth shared by /dashboard and /hierarchy so the POB total always equals the sum
@@ -244,20 +201,26 @@ def _live_zone_occupancy(db: Session):
     rows = db.execute(text(f"""
         SELECT term.zone_id, COUNT(DISTINCT latest.emp_code) AS cnt
         FROM (
+            -- Scoped to the CURRENT LOCAL DAY. Without this the "latest punch"
+            -- is the latest ever, so anyone who clocked in on a previous day and
+            -- never clocked out is counted as on site indefinitely — a warehouse
+            -- reported staff on board when the site was empty. Occupancy is a
+            -- statement about today, and it resets at local midnight.
             SELECT DISTINCT ON (t.emp_code) t.emp_code, t.punch_state, t.terminal_sn
             FROM iclock_transaction t
+            WHERE t.punch_time >= (date_trunc('day', now() AT TIME ZONE :tz) AT TIME ZONE :tz)
             ORDER BY t.emp_code, t.punch_time DESC
         ) latest
         JOIN iclock_terminal term ON term.sn = latest.terminal_sn
         WHERE latest.punch_state IN (0, 4) AND term.zone_id IS NOT NULL
           {_exclude_safe}
         GROUP BY term.zone_id
-    """), ({"safe_codes": list(safe_codes)} if safe_codes else {})).fetchall()
+    """), {"tz": settings.TIMEZONE,
+           **({"safe_codes": list(safe_codes)} if safe_codes else {})}).fetchall()
     counts = {r.zone_id: r.cnt for r in rows}
     for zid, cnt in safe_by_zone.items():     # move Safe people to the muster zone
         counts[zid] = counts.get(zid, 0) + cnt
     return counts, safe_by_zone, muster_active
-
 
 @router.get("/dashboard")
 def get_dashboard(db: Session = Depends(get_db), _=Depends(get_current_user)):
@@ -313,28 +276,6 @@ def get_dashboard(db: Session = Depends(get_db), _=Depends(get_current_user)):
     # and the dual-writer conflict with _recalc).
     return result
 
-
-@router.get("/available-devices")
-def get_available_devices(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    rows = db.execute(text(
-        "SELECT id, sn, alias, ip_address, zone_id, last_activity, state FROM iclock_terminal ORDER BY alias"
-    )).fetchall()
-    return [
-        {
-            "id": r.id,
-            "sn": r.sn,
-            "alias": r.alias or f"Terminal {r.sn}",
-            "ip_address": r.ip_address,
-            "zone_id": r.zone_id,
-            "last_activity": r.last_activity.isoformat() if r.last_activity else None,
-            "state": r.state,
-            "status": "online" if r.state == 1 else "offline",
-            "already_assigned": r.zone_id is not None,
-        }
-        for r in rows
-    ]
-
-
 @router.get("/available-doors")
 def get_available_doors(db: Session = Depends(get_db), _=Depends(get_current_user)):
     """All controller doors, with their controller and current zone (if any).
@@ -356,7 +297,6 @@ def get_available_doors(db: Session = Depends(get_db), _=Depends(get_current_use
         "zone_id": r.zone_id,
         "already_assigned": r.zone_id is not None,
     } for r in rows]
-
 
 @router.get("/hierarchy")
 def get_hierarchy(db: Session = Depends(get_db), _=Depends(get_current_user)):
@@ -383,12 +323,10 @@ def get_hierarchy(db: Session = Depends(get_db), _=Depends(get_current_user)):
     total_pob = sum(zd.get("current_personnel_count", 0) for zd in zone_dicts)
     return {"top_level": top_level, "by_parent": by_parent, "total_pob": total_pob}
 
-
 @router.get("/public-list")
 def get_public_zones(db: Session = Depends(get_db)):
     zones = db.query(Zone).filter(Zone.is_active == True).order_by(Zone.name).all()
     return [{"id": z.id, "name": z.name, "code": z.code, "zone_type": z.zone_type} for z in zones]
-
 
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
@@ -422,7 +360,6 @@ def get_zones(
 
     zones = q.order_by(Zone.name).offset(skip).limit(limit).all()
     return [_to_dict(z, db) for z in zones]
-
 
 @router.get("/activity-feed")
 def get_zone_activity_feed(
@@ -477,7 +414,6 @@ def get_zone_activity_feed(
         for r in rows
     ]
 
-
 @router.get("/{zone_id}")
 def get_zone(
     zone_id: int,
@@ -488,7 +424,6 @@ def get_zone(
     if not zone:
         raise HTTPException(status_code=404, detail="Zone not found")
     return _to_dict(zone, db)
-
 
 @router.post("", status_code=201)
 def create_zone(
@@ -526,7 +461,6 @@ def create_zone(
     db.refresh(zone)
     return _to_dict(zone, db)
 
-
 @router.put("/{zone_id}")
 def update_zone(
     zone_id: int,
@@ -545,10 +479,31 @@ def update_zone(
                 value = value.upper()
             setattr(zone, field, value)
 
+    # The warehouse form edits the legacy varchar latitude/longitude, but the
+    # geofence engine and the mobile app read geofence_lat/geofence_lng. Left
+    # unmirrored, moving a warehouse here changed nothing that actually governs
+    # clocking in — the fence stayed where it was and staff were told they were
+    # kilometres away. The fence editor already writes both; this makes the two
+    # screens agree whichever one an administrator happens to use.
+    if "latitude" in body or "longitude" in body:
+        def _coord(raw, lo, hi):
+            try:
+                v = float(raw)
+            except (TypeError, ValueError):
+                return None
+            return v if lo <= v <= hi else None
+
+        lat = _coord(body.get("latitude", zone.latitude), -90, 90)
+        lng = _coord(body.get("longitude", zone.longitude), -180, 180)
+        if lat is not None and lng is not None:
+            zone.geofence_lat = lat
+            zone.geofence_lng = lng
+            logger.info("Zone %s coordinates mirrored to the geofence columns (%s, %s)",
+                        zone_id, lat, lng)
+
     db.commit()
     db.refresh(zone)
     return _to_dict(zone, db)
-
 
 @router.patch("/{zone_id}/status")
 def update_zone_status(
@@ -568,7 +523,6 @@ def update_zone_status(
     db.commit()
     return {"success": True, "id": zone_id, "status": new_status}
 
-
 @router.patch("/{zone_id}/position")
 def update_zone_position(
     zone_id: int,
@@ -587,7 +541,6 @@ def update_zone_position(
     db.commit()
     return {"success": True, "id": zone_id, "tile_position": new_pos}
 
-
 def _delete_single_zone(db: Session, zone_id: int) -> None:
     """Delete one zone row and its dependent rows. Caller is responsible for commit."""
     # Nullable FKs — SET NULL
@@ -605,8 +558,8 @@ def _delete_single_zone(db: Session, zone_id: int) -> None:
     db.execute(text(
         "UPDATE mustering_event SET muster_zone_ids = ("
         "  SELECT COALESCE(jsonb_agg(e), '[]'::jsonb) FROM jsonb_array_elements(muster_zone_ids) e"
-        "  WHERE e <> to_jsonb(:z::int)"
-        ") WHERE muster_zone_ids IS NOT NULL AND muster_zone_ids @> to_jsonb(:z::int)"
+        "  WHERE e <> to_jsonb(CAST(:z AS int))"
+        ") WHERE muster_zone_ids IS NOT NULL AND muster_zone_ids @> to_jsonb(CAST(:z AS int))"
     ), {"z": zone_id})
     db.execute(text("UPDATE access_readers SET zone_id = NULL WHERE zone_id = :z"), {"z": zone_id})
     db.execute(text("UPDATE emergency_template SET auto_mustering_zone_id = NULL WHERE auto_mustering_zone_id = :z"), {"z": zone_id})
@@ -622,7 +575,6 @@ def _delete_single_zone(db: Session, zone_id: int) -> None:
     db.execute(text("DELETE FROM zone_personnel_assignments WHERE zone_id = :z"), {"z": zone_id})
     db.execute(text("DELETE FROM zones WHERE id = :z"), {"z": zone_id})
 
-
 def _cascade_delete_zone(db: Session, zone_id: int) -> int:
     """Recursively delete a zone and all its descendants. Returns total zones deleted."""
     children = db.query(Zone.id).filter(Zone.parent_zone_id == zone_id).all()
@@ -631,7 +583,6 @@ def _cascade_delete_zone(db: Session, zone_id: int) -> int:
         total += _cascade_delete_zone(db, child_id)
     _delete_single_zone(db, zone_id)
     return total
-
 
 @router.delete("/{zone_id}")
 def delete_zone(
@@ -661,7 +612,6 @@ def delete_zone(
     db.commit()
     return {"message": f"Zone '{zone_name}' deleted successfully"}
 
-
 @router.get("/{zone_id}/sub-zones")
 def get_sub_zones(
     zone_id: int,
@@ -676,7 +626,6 @@ def get_sub_zones(
         Zone.is_active == True,
     ).order_by(Zone.name).all()
     return [_to_dict(z, db) for z in children]
-
 
 @router.get("/{zone_id}/personnel")
 def get_zone_personnel(
@@ -703,7 +652,6 @@ def get_zone_personnel(
         }
         for a in assignments
     ]
-
 
 def _sync_zone_to_access_control(zone_id: int, db: Session) -> None:
     """
@@ -778,7 +726,6 @@ def _sync_zone_to_access_control(zone_id: int, db: Session) -> None:
           )
     """), {"azid": acc_zone_id, "zid": zone_id})
 
-
 # ── Zone ↔ Door assignment (controller port → door → zone) ─────────────────────
 # Access-control zones are fed by DOORS, not readers directly. A door is a
 # (controller, door_no) unit on a C3/inBio panel; assigning it to a zone maps that
@@ -802,7 +749,6 @@ def get_zone_doors(zone_id: int, db: Session = Depends(get_db), _=Depends(get_cu
         "label": f"{r.controller_name} — Door {r.door_no}",
     } for r in rows]
 
-
 @router.post("/{zone_id}/assign-door")
 def assign_door(zone_id: int, body: dict, db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Assign a controller door to this zone (maps its reader ports to the zone)."""
@@ -822,7 +768,6 @@ def assign_door(zone_id: int, body: dict, db: Session = Depends(get_db), _=Depen
     return {"message": "Door assigned to zone", "zone_id": zone_id,
             "controller_id": cid, "door_no": dn, "ports_updated": n}
 
-
 @router.delete("/{zone_id}/doors")
 def remove_zone_door(zone_id: int, controller_id: int = Query(...), door_no: int = Query(...),
                      db: Session = Depends(get_db), _=Depends(get_current_user)):
@@ -834,7 +779,6 @@ def remove_zone_door(zone_id: int, controller_id: int = Query(...), door_no: int
     db.commit()
     return {"message": "Door removed from zone" if n else "Door was not assigned to this zone",
             "ports_updated": n}
-
 
 @router.get("/{zone_id}/readers")
 def get_zone_readers(
@@ -862,7 +806,6 @@ def get_zone_readers(
         }
         for r in rows
     ]
-
 
 @router.post("/{zone_id}/assign-reader")
 def assign_reader(
@@ -947,7 +890,6 @@ def assign_reader(
         "moved_from": old_zone_id if moved else None,
     }
 
-
 @router.delete("/{zone_id}/readers/{reader_id}")
 def remove_reader(
     zone_id: int,
@@ -973,26 +915,41 @@ def remove_reader(
 
     return {"message": "Reader removed from zone"}
 
-
 @router.get("/{zone_id}/current-personnel")
 def get_current_personnel(
     zone_id: int,
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
+    # Derived from iclock_transaction — the authoritative punch table — joined to
+    # the warehouse through iclock_terminal.zone_id, which covers a physical
+    # reader and a warehouse's virtual mobile terminal alike.
+    #
+    # This previously read zone_personnel_tracking, a table only the old ZKTeco
+    # reader path ever wrote to. Mobile punches never appear there, so the
+    # warehouse showed a headcount (computed from the punches) beside an empty
+    # list of people.
     rows = db.execute(text("""
-        SELECT latest.emp_code, latest.event_type, latest.punch_time, latest.device_sn,
+        WITH last_punch AS (
+            -- Each employee's most recent punch ACROSS EVERY WAREHOUSE, not just
+            -- this one. Scoping the "latest" per zone would leave somebody who
+            -- clocked in here and later clocked in elsewhere still counted as
+            -- present at both — a person is only ever at their last punch.
+            SELECT DISTINCT ON (t.emp_code)
+                   t.emp_code, t.punch_state, t.punch_time, t.terminal_sn,
+                   term.zone_id
+            FROM iclock_transaction t
+            JOIN iclock_terminal term ON term.sn = t.terminal_sn
+            WHERE t.punch_time >= date_trunc('day', now())
+            ORDER BY t.emp_code, t.punch_time DESC
+        )
+        SELECT lp.emp_code, lp.punch_time, lp.terminal_sn AS device_sn,
                p.first_name, p.last_name, p.photo_url, p.department, p.position
-        FROM (
-            SELECT DISTINCT ON (emp_code)
-                emp_code, event_type, punch_time, device_sn
-            FROM zone_personnel_tracking
-            WHERE zone_id = :zid
-            ORDER BY emp_code, punch_time DESC
-        ) latest
-        LEFT JOIN personnel p ON p.emp_code = latest.emp_code
-        WHERE latest.event_type = 'CLOCK_IN'
-        ORDER BY latest.punch_time DESC
+        FROM last_punch lp
+        LEFT JOIN personnel p ON UPPER(p.emp_code) = UPPER(lp.emp_code)
+        WHERE lp.punch_state = 0            -- 0 = clocked in, 1 = clocked out
+          AND lp.zone_id = :zid
+        ORDER BY lp.punch_time DESC
     """), {"zid": zone_id}).fetchall()
     return [
         {
@@ -1006,7 +963,6 @@ def get_current_personnel(
         }
         for r in rows
     ]
-
 
 @router.get("/{zone_id}/tracking")
 def get_tracking_log(
@@ -1034,7 +990,6 @@ def get_tracking_log(
         }
         for r in rows
     ]
-
 
 @router.post("/{zone_id}/reset-occupancy")
 def reset_occupancy(
@@ -1127,7 +1082,6 @@ def reset_occupancy(
         "message": f"Zone occupancy reset. {len(set(cleared))} phantom check-in(s) cleared.",
     }
 
-
 @router.post("/{zone_id}/push-to-biotime")
 def push_to_biotime(
     zone_id: int,
@@ -1157,7 +1111,6 @@ def push_to_biotime(
     db.commit()
 
     return {"message": "Zone pushed to BioTime", "biotime_area_id": bt.id}
-
 
 # ── Live zone WebSocket ───────────────────────────────────────────────────────
 
@@ -1199,7 +1152,6 @@ async def zone_live_ws(websocket: WebSocket):
         zone_ws_disconnect(websocket)
     except Exception:
         zone_ws_disconnect(websocket)
-
 
 @router.get("/{zone_id}/live-personnel")
 def get_zone_live_personnel(

@@ -1428,6 +1428,32 @@ async def get_calculation_logs(
         logger.error(f"Error getting calculation logs: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/payslip/template/", response_model=List[Dict[str, Any]])
+async def get_payslip_templates(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Get payslip templates"""
+    try:
+        templates = db.query(PayPayslipTemplate).filter(
+            PayPayslipTemplate.is_active == True
+        ).order_by(PayPayslipTemplate.template_name).all()
+        
+        return [
+            {
+                "id": template.id,
+                "template_name": template.template_name,
+                "template_type": template.template_type,
+                "is_default": template.is_default,
+                "created_at": template.created_at.isoformat()
+            }
+            for template in templates
+        ]
+        
+    except Exception as e:
+        logger.error(f"Error getting payslip templates: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Payslip Generation
 @router.get("/payslip/{salary_id}/", response_model=Dict[str, Any])
 async def get_payslip(
@@ -1515,32 +1541,6 @@ async def bulk_send_payslips(
         
     except Exception as e:
         logger.error(f"Error in bulk email sending: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/payslip/template/", response_model=List[Dict[str, Any]])
-async def get_payslip_templates(
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """Get payslip templates"""
-    try:
-        templates = db.query(PayPayslipTemplate).filter(
-            PayPayslipTemplate.is_active == True
-        ).order_by(PayPayslipTemplate.template_name).all()
-        
-        return [
-            {
-                "id": template.id,
-                "template_name": template.template_name,
-                "template_type": template.template_type,
-                "is_default": template.is_default,
-                "created_at": template.created_at.isoformat()
-            }
-            for template in templates
-        ]
-        
-    except Exception as e:
-        logger.error(f"Error getting payslip templates: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/payslip/template", response_model=Dict[str, Any])

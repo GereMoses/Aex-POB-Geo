@@ -330,7 +330,7 @@ const CalculationTab = ({ periods, employees, departments = [] }) => {
               <Descriptions.Item label="Present Days">{detailDrawer.salary.present_days}</Descriptions.Item>
               <Descriptions.Item label="OT Hours">{detailDrawer.salary.ot_hours}</Descriptions.Item>
               <Descriptions.Item label="Late Minutes">{detailDrawer.salary.late_minutes}</Descriptions.Item>
-              {detailDrawer.salary.zone_hours > 0 && <Descriptions.Item label="Zone Hours">{detailDrawer.salary.zone_hours}</Descriptions.Item>}
+              {detailDrawer.salary.zone_hours > 0 && <Descriptions.Item label="Warehouse Hours">{detailDrawer.salary.zone_hours}</Descriptions.Item>}
               {detailDrawer.salary.night_hours > 0 && <Descriptions.Item label="Night Hours">{detailDrawer.salary.night_hours}</Descriptions.Item>}
               {detailDrawer.salary.hazard_days > 0 && <Descriptions.Item label="Hazard Days">{detailDrawer.salary.hazard_days}</Descriptions.Item>}
             </Descriptions>

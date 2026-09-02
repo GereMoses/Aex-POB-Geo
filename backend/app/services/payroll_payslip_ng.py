@@ -18,7 +18,7 @@ from ..models.payroll import PaySalary, PaySalaryItem, PayPeriod, PayItemType
 from ..models.personnel import Personnel
 from .payroll_run_ng import get_active_compensation
 
-COMPANY = "Apex POB — Marconi.ng EPC Limited"
+COMPANY = "Apex POB"
 
 
 def _naira(v) -> str:

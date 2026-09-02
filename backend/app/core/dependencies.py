@@ -87,7 +87,7 @@ async def get_current_user(
         SELECT id, username, email, NULL AS full_name, NULL AS phone, is_active, is_superuser,
                TRUE AS is_verified, COALESCE(is_global_admin, FALSE) AS is_global_admin
         FROM auth_user
-        WHERE email = :email OR username = :email
+        WHERE LOWER(email) = LOWER(:email) OR LOWER(username) = LOWER(:email)
     """), {"email": email}).fetchone()
 
     if result:

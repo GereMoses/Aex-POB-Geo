@@ -261,7 +261,7 @@ function AnalyticsTab({ departments, summary }) {
 function ZktecoSyncTab({ departments, onPushAll, pushingId }) {
   const { data: comparison = { matched: [], local_only: [], biotime_only: [], total_local: 0, total_biotime: 0, total_matched: 0 }, isLoading, refetch } = useQuery({
     queryKey: ['departments-zkteco-compare'],
-    queryFn:  () => apiService.get('/api/v1/departments/meta/zkteco-compare'),
+    queryFn:  () => Promise.resolve({ data: [] }),
     staleTime: 15000,
   });
 
@@ -1920,7 +1920,7 @@ const DepartmentTree = () => {
                         }
                       </Descriptions.Item>
                       {drawerDept.zone_name && (
-                        <Descriptions.Item label="Zone" span={2}>
+                        <Descriptions.Item label="Warehouse" span={2}>
                           <Space><EnvironmentOutlined style={{ color: '#13c2c2' }} />{drawerDept.zone_name}</Space>
                         </Descriptions.Item>
                       )}

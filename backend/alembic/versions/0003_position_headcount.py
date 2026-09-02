@@ -5,6 +5,7 @@ Revises: 0002_security_columns
 Create Date: 2026-06-13
 """
 from alembic import op
+import migration_helpers as mh
 import sqlalchemy as sa
 
 revision = "0003_position_headcount"
@@ -14,7 +15,7 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column(
+    mh.add_column(
         "positions",
         sa.Column("headcount", sa.Integer(), nullable=True, server_default="1"),
     )

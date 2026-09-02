@@ -53,10 +53,9 @@ const AnalyticsTab = ({ zones, summary }) => {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <Row gutter={12}>
         {[
-          { label: 'Total Zones', value: summary?.total ?? zones.length, color: '#1677ff' },
+          { label: 'Total Warehouses', value: summary?.total ?? zones.length, color: '#1677ff' },
           { label: 'Active', value: summary?.active ?? zones.filter(z => z.is_active).length, color: '#52c41a' },
           { label: 'Inactive', value: summary?.inactive ?? zones.filter(z => !z.is_active).length, color: '#ff4d4f' },
-          { label: 'ZKTeco Synced', value: summary?.zkteco_synced ?? 0, color: '#722ed1' },
         ].map(({ label, value, color }) => (
           <Col span={6} key={label}>
             <Card size="small">
@@ -68,7 +67,7 @@ const AnalyticsTab = ({ zones, summary }) => {
 
       <Row gutter={12}>
         <Col span={8}>
-          <Card size="small" title="By Zone Type">
+          <Card size="small" title="By Warehouse Type">
             {Object.entries(byType).map(([type, count]) => (
               <div key={type} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid #f0f0f0' }}>
                 <Tag color={ZONE_TYPE_COLORS[type] || 'default'} style={{ margin: 0 }}>{ZONE_TYPE_LABELS[type] || type}</Tag>
@@ -101,136 +100,6 @@ const AnalyticsTab = ({ zones, summary }) => {
           </Card>
         </Col>
       </Row>
-    </div>
-  );
-};
-
-// ── ZKTeco Sync Tab ────────────────────────────────────────────────────────────
-const ZktecoSyncTab = ({ onRefresh }) => {
-  const queryClient = useQueryClient();
-
-  const { data: compareData, isLoading, refetch } = useQuery({
-    queryKey: ['zones-zkteco-compare'],
-    queryFn: () => apiService.get('/api/v1/zones/meta/zkteco-compare'),
-  });
-
-  const pushMutation = useMutation({
-    mutationFn: (zoneId) => apiService.post(`/api/v1/zones/${zoneId}/push-to-biotime`, {}),
-    onSuccess: () => {
-      message.success('Zone pushed to BioTime');
-      refetch();
-      queryClient.invalidateQueries(['zones']);
-    },
-    onError: (err) => message.error(err?.response?.data?.detail || 'Push failed'),
-  });
-
-  const matched = compareData?.matched || [];
-  const localOnly = compareData?.local_only || [];
-  const btOnly = compareData?.biotime_only || [];
-
-  const matchedColumns = [
-    { title: 'Zone', dataIndex: 'zone_name', key: 'zone_name', width: 200 },
-    { title: 'Code', dataIndex: 'zone_code', key: 'zone_code', width: 140, render: c => <code style={{ fontSize: 11 }}>{c}</code> },
-    {
-      title: 'Match', key: 'match', width: 160,
-      render: (_, r) => (
-        <Space size={4}>
-          {r.code_match && <Tag color="blue" style={{ fontSize: 10 }}>Code ✓</Tag>}
-          {r.name_match && <Tag color="green" style={{ fontSize: 10 }}>Name ✓</Tag>}
-        </Space>
-      ),
-    },
-  ];
-
-  const localOnlyColumns = [
-    { title: 'Zone', dataIndex: 'zone_name', key: 'zone_name', width: 200 },
-    { title: 'Code', dataIndex: 'zone_code', key: 'zone_code', width: 140, render: c => <code style={{ fontSize: 11 }}>{c}</code> },
-    {
-      title: 'Action', key: 'action', width: 160,
-      render: (_, r) => (
-        <Button
-          size="small"
-          type="primary"
-          icon={<ThunderboltOutlined />}
-          loading={pushMutation.isPending}
-          onClick={() => pushMutation.mutate(r.zone_id)}
-        >
-          Push to BioTime
-        </Button>
-      ),
-    },
-  ];
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <Row gutter={12}>
-        {[
-          { label: 'Total Local Zones', value: compareData?.total_local ?? 0, color: '#1677ff', icon: <EnvironmentOutlined /> },
-          { label: 'Total BioTime Areas', value: compareData?.total_biotime ?? 0, color: '#722ed1', icon: <ThunderboltOutlined /> },
-          { label: 'Linked', value: compareData?.total_matched ?? 0, color: '#52c41a', icon: <CheckCircleOutlined /> },
-          { label: 'Not Synced', value: (compareData?.local_only || []).length, color: '#faad14', icon: <WarningOutlined /> },
-        ].map(({ label, value, color, icon }) => (
-          <Col span={6} key={label}>
-            <Card size="small">
-              <Statistic title={<Space size={4}>{icon}<span>{label}</span></Space>} value={value} valueStyle={{ color, fontSize: 20 }} />
-            </Card>
-          </Col>
-        ))}
-      </Row>
-
-      {localOnly.length > 0 && (
-        <Alert
-          type="warning"
-          showIcon
-          message={`${localOnly.length} zone(s) not yet in BioTime`}
-          description="These zones exist in POB but have no matching area in ZKTeco BioTime. Use 'Push to BioTime' to sync them."
-          action={
-            <Button size="small" type="primary" onClick={() => localOnly.forEach(z => pushMutation.mutate(z.zone_id))}>
-              Push All
-            </Button>
-          }
-        />
-      )}
-
-      <Card size="small" title={<Space><CheckCircleOutlined style={{ color: '#52c41a' }} />Linked ({matched.length})</Space>}>
-        <Table
-          dataSource={matched}
-          columns={matchedColumns}
-          rowKey="zone_id"
-          size="small"
-          pagination={false}
-          loading={isLoading}
-          locale={{ emptyText: 'No linked zones yet' }}
-        />
-      </Card>
-
-      <Card size="small" title={<Space><WarningOutlined style={{ color: '#faad14' }} />POB Only — Not in BioTime ({localOnly.length})</Space>}>
-        <Table
-          dataSource={localOnly}
-          columns={localOnlyColumns}
-          rowKey="zone_id"
-          size="small"
-          pagination={false}
-          loading={isLoading}
-          locale={{ emptyText: 'All zones are synced' }}
-        />
-      </Card>
-
-      {btOnly.length > 0 && (
-        <Card size="small" title={<Space><CloseCircleOutlined style={{ color: '#ff4d4f' }} />BioTime Only — Not in POB ({btOnly.length})</Space>}>
-          <Table
-            dataSource={btOnly}
-            columns={[
-              { title: 'BioTime Area', dataIndex: 'area_name', key: 'area_name', width: 200 },
-              { title: 'Code', dataIndex: 'area_code', key: 'area_code', width: 140, render: c => <code style={{ fontSize: 11 }}>{c}</code> },
-            ]}
-            rowKey="area_id"
-            size="small"
-            pagination={false}
-            loading={isLoading}
-          />
-        </Card>
-      )}
     </div>
   );
 };
@@ -274,7 +143,7 @@ const AreaList = () => {
       return await apiService.post('/api/v1/zones/', values);
     },
     onSuccess: () => {
-      message.success(editingZone ? 'Zone updated' : 'Zone created');
+      message.success(editingZone ? 'Warehouse updated' : 'Warehouse created');
       setIsModalOpen(false);
       setEditingZone(null);
       form.resetFields();
@@ -287,7 +156,7 @@ const AreaList = () => {
   const deleteMutation = useMutation({
     mutationFn: (id) => apiService.delete(`/api/v1/zones/${id}`),
     onSuccess: () => {
-      message.success('Zone deactivated');
+      message.success('Warehouse deactivated');
       queryClient.invalidateQueries(['zones']);
       queryClient.invalidateQueries(['zones-summary']);
     },
@@ -306,7 +175,7 @@ const AreaList = () => {
 
   const columns = [
     {
-      title: 'Zone / Area',
+      title: 'Warehouse / Area',
       dataIndex: 'name',
       key: 'name',
       width: 200,
@@ -419,13 +288,13 @@ const AreaList = () => {
         items={[
           {
             key: 'overview',
-            label: 'Areas / Zones',
+            label: 'Areas / Warehouses',
             children: (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {/* KPI strip */}
                 <Row gutter={12}>
                   {[
-                    { label: 'Total Zones', value: summary?.total ?? zones.length, color: '#1677ff', icon: <EnvironmentOutlined /> },
+                    { label: 'Total Warehouses', value: summary?.total ?? zones.length, color: '#1677ff', icon: <EnvironmentOutlined /> },
                     { label: 'Active', value: summary?.active ?? zones.filter(z => z.is_active).length, color: '#52c41a', icon: <CheckCircleOutlined /> },
                     { label: 'Inactive', value: summary?.inactive ?? zones.filter(z => !z.is_active).length, color: '#ff4d4f', icon: <CloseCircleOutlined /> },
                     { label: 'BioTime Synced', value: summary?.zkteco_synced ?? 0, color: '#722ed1', icon: <ThunderboltOutlined /> },
@@ -456,7 +325,7 @@ const AreaList = () => {
                     </Col>
                     <Col>
                       <Select
-                        placeholder="Zone Type"
+                        placeholder="Warehouse Type"
                         style={{ width: 150 }}
                         value={selectedType}
                         onChange={setSelectedType}
@@ -482,7 +351,7 @@ const AreaList = () => {
                     </Col>
                     <Col>
                       <Space>
-                        <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>New Zone</Button>
+                        <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>New Warehouse</Button>
                         <Button icon={<ReloadOutlined />} onClick={() => refetch()}>Refresh</Button>
                       </Space>
                     </Col>
@@ -513,11 +382,6 @@ const AreaList = () => {
             key: 'analytics',
             label: 'Analytics',
             children: <AnalyticsTab zones={zones} summary={summary} />,
-          },
-          {
-            key: 'zkteco',
-            label: <Space><ThunderboltOutlined />ZKTeco Sync</Space>,
-            children: <ZktecoSyncTab />,
           },
         ]}
       />
@@ -565,7 +429,7 @@ const AreaList = () => {
 
       {/* Create / Edit Modal */}
       <Modal
-        title={editingZone ? `Edit Zone — ${editingZone.name}` : 'New Zone / Area'}
+        title={editingZone ? `Edit Warehouse — ${editingZone.name}` : 'New Warehouse / Area'}
         open={isModalOpen}
         onOk={handleSave}
         onCancel={() => { setIsModalOpen(false); setEditingZone(null); form.resetFields(); }}
@@ -577,12 +441,12 @@ const AreaList = () => {
         <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="name" label="Zone Name" rules={[{ required: true, message: 'Required' }]}>
+              <Form.Item name="name" label="Warehouse Name" rules={[{ required: true, message: 'Required' }]}>
                 <Input placeholder="e.g. Platform A" />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="code" label="Zone Code" rules={[{ required: true, message: 'Required' }]}>
+              <Form.Item name="code" label="Warehouse Code" rules={[{ required: true, message: 'Required' }]}>
                 <Input placeholder="e.g. OFF-PLAT-A-001" disabled={!!editingZone} />
               </Form.Item>
             </Col>
@@ -590,7 +454,7 @@ const AreaList = () => {
 
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="zone_type" label="Zone Type" initialValue="WORK_AREA" rules={[{ required: true }]}>
+              <Form.Item name="zone_type" label="Warehouse Type" initialValue="WORK_AREA" rules={[{ required: true }]}>
                 <Select>
                   {Object.entries(ZONE_TYPE_LABELS).map(([v, l]) => (
                     <Select.Option key={v} value={v}>{l}</Select.Option>
@@ -658,7 +522,7 @@ const AreaList = () => {
           </Form.Item>
 
           <Form.Item name="description" label="Description">
-            <Input.TextArea rows={2} placeholder="Zone / area description" />
+            <Input.TextArea rows={2} placeholder="Warehouse / area description" />
           </Form.Item>
 
           <Row gutter={16}>

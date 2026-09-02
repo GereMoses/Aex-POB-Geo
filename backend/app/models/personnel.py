@@ -100,6 +100,7 @@ class Personnel(Base):
     work_schedule = Column(JSON, nullable=True)  # BioTime work schedule
     access_groups = Column(JSON, nullable=True)  # BioTime access group assignments
     device_groups = Column(JSON, nullable=True)  # BioTime device group assignments
+    custom_fields = Column(JSONB, nullable=True)   # Free-form per-deployment extras
     biometric_quality_score = Column(Float, default=0.0)  # BioTime biometric quality metrics
     last_sync_timestamp = Column(DateTime(timezone=True), nullable=True)  # BioTime sync tracking
     timezone_preference = Column(String(50), default='UTC')  # Personnel timezone preference
@@ -119,7 +120,6 @@ class Personnel(Base):
     
     # BioTime Enhanced Relationships
     # biometric_templates loaded lazily to avoid import-order issues
-    biometric_templates = relationship("BiometricTemplate", back_populates="personnel")
     resignations = relationship("Resignation", back_populates="personnel")
     # access_schedules = relationship("BioTimeAccessSchedule", back_populates="personnel")  # Temporarily disabled due to JSON relationship
     # biotime_sync_logs = relationship("BioTimeSyncLog", foreign_keys=["personnel_id"])  # Temporarily disabled due to class rename

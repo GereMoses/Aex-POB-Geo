@@ -2,9 +2,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Button, Alert, Skeleton, Tag, Avatar, Empty } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import {
-  SwapOutlined, ReloadOutlined, DesktopOutlined, WarningOutlined,
-  FireOutlined, RightOutlined, LoginOutlined, LogoutOutlined,
-  CheckCircleFilled, ThunderboltOutlined,
+  CheckCircleFilled, EnvironmentOutlined, LoginOutlined, LogoutOutlined, ReloadOutlined, RightOutlined, StopOutlined, SwapOutlined, ThunderboltOutlined, WarningOutlined,
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -163,55 +161,52 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const POLL = 30_000;
 
-  const { data: pobRaw, isLoading: pobLoading, refetch: rPob } = useQuery({
-    queryKey: ['dash-pob'], queryFn: () => apiService.get('/api/v1/pob-status/dashboard'),
-    refetchInterval: POLL, refetchOnWindowFocus: false,
-  });
-  const { data: devRaw, isLoading: devLoading, refetch: rDev } = useQuery({
-    queryKey: ['dash-devices'], queryFn: () => apiService.get('/api/device/terminals/'),
+  // Live headcount per warehouse, derived from today's punches. This replaced
+  // /pob-status/dashboard, which belonged to the offshore module and now 404s.
+  const { data: occRaw, isLoading: pobLoading, refetch: rPob } = useQuery({
+    queryKey: ['dash-occupancy'], queryFn: () => apiService.get('/api/v1/geofence/occupancy'),
     refetchInterval: POLL, refetchOnWindowFocus: false,
   });
   const { data: persRaw } = useQuery({
     queryKey: ['dash-personnel'], queryFn: () => apiService.get('/api/v1/personnel/?page_size=1'),
     refetchInterval: 60_000, refetchOnWindowFocus: false,
   });
+  // Recent punches, from the attendance record rather than a device feed.
   const { data: txRaw, isLoading: txLoading, refetch: rTx } = useQuery({
-    queryKey: ['dash-tx'], queryFn: () => apiService.get('/api/device/transactions/live/?limit=100'),
+    queryKey: ['dash-tx'],
+    queryFn: () => apiService.get('/api/v1/attendance/transactions', { page: 1, page_size: 100 }),
     refetchInterval: 15_000, refetchOnWindowFocus: false,
   });
-  const { data: trendRaw } = useQuery({
-    queryKey: ['dash-trend'], queryFn: () => apiService.get('/api/v1/pob-status/attendance-trend?days=30'),
-    refetchInterval: 5 * 60_000, refetchOnWindowFocus: false,
-  });
-  const { data: methodRaw } = useQuery({
-    queryKey: ['dash-methods'], queryFn: () => apiService.get('/api/v1/pob-status/verify-methods'),
+  // Blocked and flagged punches — the operational signal that replaced the
+  // device-health and emergency tiles.
+  const { data: excRaw } = useQuery({
+    queryKey: ['dash-exceptions'],
+    queryFn: () => apiService.get('/api/v1/geofence/exceptions/summary', { days: 7 }),
     refetchInterval: POLL, refetchOnWindowFocus: false,
-  });
-  const { data: emergencyRaw } = useQuery({
-    queryKey: ['dash-emergency'], queryFn: () => apiService.get('/api/emergency/metrics'),
-    refetchInterval: POLL, refetchOnWindowFocus: false,
-  });
-  const { data: mtdRaw } = useQuery({
-    queryKey: ['dash-mtd'], queryFn: () => apiService.get('/api/mtd/dashboard/compliance/'),
-    refetchInterval: 5 * 60_000, refetchOnWindowFocus: false,
   });
   const { data: zonesRaw } = useQuery({
     queryKey: ['dash-zones'], queryFn: () => apiService.get('/api/v1/zones/dashboard'),
-    refetchInterval: POLL, refetchOnWindowFocus: false,
-  });
-  const { data: lastActRaw } = useQuery({
-    queryKey: ['dash-last-activity'], queryFn: () => apiService.get('/api/v1/pob-status/last-activity?limit=50'),
     refetchInterval: POLL, refetchOnWindowFocus: false,
   });
 
   const [alertDismissed, setAlertDismissed] = useState(false);
 
   // ── transforms ──
-  const pob = pobRaw ?? {};
-  // /api/device/terminals/ returns { data: [...], total } — not a bare array.
-  const devices = Array.isArray(devRaw) ? devRaw : (devRaw?.data ?? []);
-  const tx = txRaw?.data ?? [];
-  const lastSeen = lastActRaw?.data ?? [];
+  const occ = occRaw ?? {};
+  const pob = {
+    total_onboard: occ.total_on_site ?? 0,
+    total_personnel: occ.total_assigned ?? 0,
+  };
+  // No physical readers in a mobile-only deployment.
+  const devices = [];
+  const devLoading = false;
+  const rDev = () => {};
+  const tx = txRaw?.results ?? txRaw?.data ?? [];
+  const lastSeen = [];
+  const emergencyRaw = null;
+  const mtdRaw = null;
+  const methodRaw = null;
+  const trendRaw = null;
   const totalPersonnel = persRaw?.count ?? pob.total_personnel ?? 0;
   const online = devices.filter(d => d.state === 1 || d.status === 'online');
   const offline = devices.filter(d => d.state !== 1 && d.status !== 'online');
@@ -225,16 +220,17 @@ export default function Dashboard() {
   const inTrend = todayIns - yestTx.filter(t => t.punch_state !== 1).length;
   const outTrend = todayOuts - yestTx.filter(t => t.punch_state === 1).length;
 
-  const offCount = pob.offshore_count ?? 0;
-  const onCount = pob.onshore_count ?? 0;
-  const trCount = pob.transit_count ?? 0;
-
-  // POB donut
-  const pobDonut = [
-    { name: 'Offshore', value: offCount, color: '#0ea5e9' },
-    { name: 'Onshore', value: onCount, color: '#22c55e' },
-    { name: 'Transit', value: trCount, color: '#f59e0b' },
-  ];
+  // Where staff actually are, per warehouse. The previous Offshore/Onshore/
+  // Transit split came from an offshore deployment and read 0/0/0 here, which
+  // is why the hero showed "0 on board" beside "1 on site now".
+  const SITE_COLOURS = ['#0ea5e9', '#22c55e', '#f59e0b', '#a855f7', '#ef4444',
+                        '#14b8a6', '#f472b6', '#84cc16'];
+  const occSites = (occ.sites ?? []);
+  const pobDonut = occSites
+    .filter(s => (s.on_site ?? 0) > 0)
+    .sort((a, b) => (b.on_site ?? 0) - (a.on_site ?? 0))
+    .map((s, i) => ({ name: s.code || s.name, value: s.on_site ?? 0,
+                      color: SITE_COLOURS[i % SITE_COLOURS.length] }));
 
   // 24h hourly in/out (grouped bars)
   const hourly = useMemo(() => {
@@ -303,7 +299,7 @@ export default function Dashboard() {
     .map(([name, value]) => ({ name, value: Number(value) || 0 }))
     .filter(d => d.value > 0).sort((a, b) => b.value - a.value).slice(0, 6);
 
-  // Zone occupancy (live count per zone)
+  // Warehouse occupancy (live count per zone)
   const zoneList = Array.isArray(zonesRaw) ? zonesRaw : (zonesRaw?.data ?? []);
   const zoneData = zoneList
     .map(z => ({ name: z.name, value: z.current_personnel_count ?? z.current_occupancy ?? 0 }))
@@ -321,9 +317,18 @@ export default function Dashboard() {
     return r;
   }, [tx]);
 
-  const totalPob = offCount + onCount + trCount;
+  const totalPob = occ.total_on_site ?? 0;
   const offlineNames = offline.map(d => (d.alias || d.sn || '').trim()).filter(Boolean).join(', ');
   const refresh = () => { rPob(); rDev(); rTx(); };
+
+  // Punches refused today, and photos still waiting on a supervisor. These are
+  // the two queues that actually need working, and both were previously
+  // represented by hardware counters that could only ever read 0.
+  const excSummary = excRaw ?? {};
+  const blockedWeek = (excSummary.by_reason ?? [])
+    .reduce((n, r) => n + (r.count ?? 0), 0);
+  const worstSite = (excSummary.by_site ?? [])
+    .slice().sort((a, b) => (b.count ?? 0) - (a.count ?? 0))[0];
 
   const heroCount = useCountUp(totalPob);
 
@@ -366,7 +371,7 @@ export default function Dashboard() {
         {/* ── HERO: Personnel On Board ── */}
         <div className="apex-tile t-hero" style={{ background: 'linear-gradient(135deg,#0f2740 0%,#1a3a5c 60%,#13558a 100%)', color: '#fff' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ fontSize: 13, fontWeight: 700, opacity: .85, letterSpacing: '.3px' }}>PERSONNEL ON BOARD</div>
+            <div style={{ fontSize: 13, fontWeight: 700, opacity: .85, letterSpacing: '.3px' }}>STAFF ON SITE</div>
             <Tag color="rgba(255,255,255,.15)" style={{ border: 'none', color: '#fff', borderRadius: 8, fontWeight: 700 }}>
               <span className="apex-live" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: 99, background: '#22c55e', marginRight: 6 }} />LIVE
             </Tag>
@@ -385,12 +390,17 @@ export default function Dashboard() {
                   </ResponsiveContainer>
                   <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                     <div style={{ fontSize: 34, fontWeight: 900, lineHeight: 1 }}>{heroCount}</div>
-                    <div style={{ fontSize: 10, opacity: .7, letterSpacing: '.5px' }}>ON BOARD</div>
+                    <div style={{ fontSize: 10, opacity: .7, letterSpacing: '.5px' }}>ON SITE</div>
                   </div>
                 </>
               )}
             </div>
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {pobDonut.length === 0 && (
+                <div style={{ fontSize: 12.5, opacity: .75 }}>
+                  Nobody is clocked in right now.
+                </div>
+              )}
               {pobDonut.map(d => (
                 <div key={d.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, opacity: .9 }}>
@@ -400,7 +410,7 @@ export default function Dashboard() {
                 </div>
               ))}
               <div style={{ borderTop: '1px solid rgba(255,255,255,.12)', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                <span style={{ opacity: .8 }}>Total workforce</span>
+                <span style={{ opacity: .8 }}>Staff assigned to warehouses</span>
                 <span style={{ fontWeight: 800 }}>{totalPersonnel}</span>
               </div>
             </div>
@@ -423,8 +433,10 @@ export default function Dashboard() {
         {/* ── KPI tiles ── */}
         <Kpi label="Today In" value={todayIns} icon={<LoginOutlined />} color="#22c55e" sub={inTrend} subUp={inTrend >= 0} navigate={navigate} />
         <Kpi label="Today Out" value={todayOuts} icon={<LogoutOutlined />} color="#3b82f6" sub={outTrend} subUp={outTrend >= 0} navigate={navigate} />
-        <Kpi label="Online Readers" value={online.length} icon={<DesktopOutlined />} color="#0ea5e9" path="/devices" navigate={navigate} />
-        <Kpi label="Active Alarms" value={emActive} icon={<FireOutlined />} color={emActive ? '#ef4444' : '#22c55e'} path="/emergency" navigate={navigate} />
+        <Kpi label="Blocked (7d)" value={blockedWeek} icon={<StopOutlined />}
+             color={blockedWeek ? '#ef4444' : '#22c55e'} path="/geofence" navigate={navigate} />
+        <Kpi label="Warehouses" value={occSites.length} icon={<EnvironmentOutlined />}
+             color="#0ea5e9" path="/zones" navigate={navigate} />
 
         {/* ── 30-day trend (gradient area) ── */}
         <div className="apex-tile t-trend">
@@ -445,38 +457,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* ── Verify methods donut ── */}
-        <div className="apex-tile t-methods">
-          <TileHead title="Verification Methods" sub="How people authenticate" />
-          {methodsTotal === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No data" style={{ marginTop: 40 }} /> : (
-            <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-              <div style={{ width: 130, height: 150, position: 'relative' }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={methods} dataKey="value" nameKey="name" innerRadius={44} outerRadius={62} paddingAngle={3} stroke="none">
-                      {methods.map((d, i) => <Cell key={i} fill={d.color} />)}
-                    </Pie>
-                    <Tooltip {...chartTooltip} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                  <div style={{ fontSize: 22, fontWeight: 900, color: '#0f172a' }}>{methodsTotal}</div>
-                  <div style={{ fontSize: 9, color: '#94a3b8' }}>EVENTS</div>
-                </div>
-              </div>
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {methods.map(m => (
-                  <div key={m.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#475569' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 3, background: m.color }} />{m.name}
-                    </span>
-                    <b style={{ color: '#0f172a' }}>{m.value}</b>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        
 
         {/* ── 24h activity (grouped bars) ── */}
         <div className="apex-tile t-24h">
@@ -497,66 +478,9 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* ── Device status ── */}
-        <div className="apex-tile t-dev click" onClick={() => navigate('/devices')}>
-          <TileHead title="Reader Status" sub={`${devices.length} total devices`} />
-          <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-            <div style={{ width: 120, height: 140, position: 'relative' }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={deviceDonut.filter(d => d.value > 0)} dataKey="value" nameKey="name" innerRadius={42} outerRadius={60} paddingAngle={3} stroke="none">
-                    {deviceDonut.map((d, i) => <Cell key={i} fill={d.color} />)}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                <div style={{ fontSize: 24, fontWeight: 900, color: '#22c55e' }}>{online.length}</div>
-                <div style={{ fontSize: 9, color: '#94a3b8' }}>ONLINE</div>
-              </div>
-            </div>
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12.5 }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#475569' }}>
-                  <span style={{ width: 9, height: 9, borderRadius: 3, background: '#22c55e' }} />Online</span>
-                <b style={{ color: '#0f172a' }}>{online.length}</b>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12.5 }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#475569' }}>
-                  <span style={{ width: 9, height: 9, borderRadius: 3, background: '#ef4444' }} />Offline</span>
-                <b style={{ color: '#0f172a' }}>{offline.length}</b>
-              </div>
-            </div>
-          </div>
-        </div>
+        
 
-        {/* ── Compliance ── */}
-        <div className="apex-tile t-comp click" onClick={() => navigate('/personnel')}>
-          <TileHead title="Workforce Compliance" sub="Medical · Certs · PPE readiness" />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1 }}>
-            <div style={{ width: 120, height: 120, position: 'relative', flexShrink: 0 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <RadialBarChart innerRadius="72%" outerRadius="100%" data={[{ value: mtdRate, fill: mtdRate >= 90 ? '#22c55e' : mtdRate >= 70 ? '#f59e0b' : '#ef4444' }]} startAngle={90} endAngle={-270}>
-                  <PolarAngleAxis type="number" domain={[0, 100]} tick={false} />
-                  <RadialBar dataKey="value" cornerRadius={20} background={{ fill: '#eef2f7' }} />
-                </RadialBarChart>
-              </ResponsiveContainer>
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                <div style={{ fontSize: 24, fontWeight: 900, color: '#0f172a' }}>{Math.round(mtdRate)}%</div>
-                <div style={{ fontSize: 9, color: '#94a3b8' }}>READY</div>
-              </div>
-            </div>
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 9 }}>
-              {mtdCats.map(c => (
-                <div key={c.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#475569' }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 3, background: c.color }} />{c.label}
-                  </span>
-                  <b style={{ color: '#0f172a' }}>{c.count}</b>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        
 
         {/* ── Live activity feed ── */}
         <div className="apex-tile t-feed">
@@ -590,30 +514,6 @@ export default function Dashboard() {
         </div>
 
         {/* ── Longest since last seen (early missing-person signal) ── */}
-        <div className="apex-tile t-stale click" onClick={() => navigate('/pob-status')}>
-          <TileHead title="Longest Since Last Seen" sub="On-site · idle 2h+ flagged" navigate={navigate} path="/pob-status" />
-          <div className="apex-scroll" style={{ flex: 1, overflowY: 'auto', maxHeight: 340 }}>
-            {lastSeen.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No on-site personnel" style={{ marginTop: 60 }} /> : (
-              lastSeen.slice(0, 20).map((r, i) => {
-                const col = r.stale ? '#dc2626' : '#64748b';
-                return (
-                  <div key={r.id || i} className="apex-feed-row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 8px' }}>
-                    <Avatar size={36} src={r.photo_url} style={{ background: `${col}1a`, color: col, flexShrink: 0 }}>
-                      {(r.name?.[0] || '?').toUpperCase()}
-                    </Avatar>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</div>
-                      <div style={{ fontSize: 11, color: '#94a3b8' }}>{r.location}{r.department && r.department !== '—' ? ` · ${r.department}` : ''}</div>
-                    </div>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: col, width: 82, textAlign: 'right', flexShrink: 0 }}>
-                      {r.never_seen ? 'never seen' : relativeTime(r.last_event)}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
 
         {/* ── Emergency / safety ── */}
         <div className="apex-tile t-emerg click" onClick={() => navigate('/emergency')}
@@ -673,11 +573,11 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* ── Zone Occupancy ── */}
+        {/* ── Warehouse Occupancy ── */}
         <div className="apex-tile t-zone click" onClick={() => navigate('/zones')}>
-          <TileHead title="Zone Occupancy" sub="Live headcount per zone" navigate={navigate} path="/zones" />
+          <TileHead title="Warehouse Occupancy" sub="Live headcount per warehouse" navigate={navigate} path="/zones" />
           <div style={{ flex: 1, minHeight: 200 }}>
-            {zoneData.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No one in a zone yet" style={{ marginTop: 48 }} /> : (
+            {zoneData.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No one on site yet" style={{ marginTop: 48 }} /> : (
               <ResponsiveContainer width="100%" height={Math.max(200, zoneData.length * 34)}>
                 <BarChart data={zoneData} layout="vertical" margin={{ top: 4, right: 18, left: 6, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" horizontal={false} />

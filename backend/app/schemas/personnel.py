@@ -65,6 +65,10 @@ class PersonnelUpdate(BaseModel):
     safety_critical: Optional[bool] = None
     is_onboard: Optional[bool] = None
     current_zone_id: Optional[int] = None
+    # The COMPLETE set of warehouses this employee may clock in at. Sending a
+    # set rather than a single id is what lets an edit remove a site as well as
+    # add one; omit the field entirely to leave assignments untouched.
+    warehouse_ids: Optional[List[int]] = None
     status: Optional[str] = None
     blood_group: Optional[str] = None
     emergency_contact_name: Optional[str] = None

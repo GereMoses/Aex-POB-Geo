@@ -6,6 +6,7 @@ Complete personnel management with BioTime compatibility and POB extensions
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func, text
 from typing import List, Dict, Any, Optional
+import io
 import json
 import uuid
 import pandas as pd
@@ -341,8 +342,19 @@ class PersonnelBioTimeService:
         # Convert to DataFrame
         df = pd.DataFrame(employees)
         
+        # openpyxl refuses timezone-aware datetimes, and created_at/updated_at are
+        # tz-aware, so drop the offset (values are already UTC) before writing.
+        for col in df.columns:
+            if pd.api.types.is_datetime64tz_dtype(df[col]):
+                df[col] = df[col].dt.tz_convert("UTC").dt.tz_localize(None)
+            elif df[col].dtype == object:
+                df[col] = df[col].map(
+                    lambda v: v.replace(tzinfo=None)
+                    if isinstance(v, datetime) and v.tzinfo is not None else v
+                )
+
         # Save to Excel in memory
-        output = pd.io.BytesIO()
+        output = io.BytesIO()   # pandas.io has no BytesIO — that raised AttributeError
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Employees')
         
@@ -359,7 +371,7 @@ class PersonnelBioTimeService:
         df = pd.DataFrame(employees)
         
         # Save to CSV in memory
-        output = pd.io.StringIO()
+        output = io.StringIO()   # pandas.io has no StringIO either
         df.to_csv(output, index=False)
         
         return output.getvalue()

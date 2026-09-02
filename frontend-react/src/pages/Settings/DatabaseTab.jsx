@@ -101,7 +101,7 @@ const DatabaseTab = () => {
         <Col xs={12} md={6}><Card size="small"><Statistic title="Personnel On Board" value={ov.personnel_onboard ?? '—'} prefix={<TeamOutlined />} /></Card></Col>
       </Row>
       <Row gutter={[16, 16]}>
-        <Col xs={12} md={6}><Card size="small"><Statistic title="Live Zone Occupancy" value={ov.live_occupancy ?? '—'} prefix={<TeamOutlined />} valueStyle={{ color: (ov.live_occupancy ?? 0) === (ov.personnel_onboard ?? 0) ? undefined : '#faad14' }} /></Card></Col>
+        <Col xs={12} md={6}><Card size="small"><Statistic title="Live Warehouse Occupancy" value={ov.live_occupancy ?? '—'} prefix={<TeamOutlined />} valueStyle={{ color: (ov.live_occupancy ?? 0) === (ov.personnel_onboard ?? 0) ? undefined : '#faad14' }} /></Card></Col>
         <Col xs={12} md={6}><Card size="small"><Statistic title="PostgreSQL" value={ov.postgres_version || '—'} valueStyle={{ fontSize: 18 }} /></Card></Col>
         <Col xs={24} md={12}>
           <Button icon={<ReloadOutlined />} onClick={() => refetchOverview()} loading={ovLoading} style={{ marginTop: 4 }}>Refresh overview</Button>
@@ -140,7 +140,7 @@ const DatabaseTab = () => {
                   danger: true,
                   confirm: {
                     title: 'Reset ALL occupancy?',
-                    content: 'This checks out every person and clears all on-board flags. Both the Dashboard POB and Zone Management occupancy go to 0. Use only when nobody is actually on site.',
+                    content: 'This clocks out every person and clears all on-site flags. Dashboard and Warehouse occupancy go to 0. Use only when nobody is actually on site.',
                     okText: 'Reset everything',
                   },
                 })}>

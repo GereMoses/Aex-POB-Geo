@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean, JSON, Float
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean, JSON, Float, Numeric
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from ..core.database import Base
@@ -63,15 +64,30 @@ class Zone(Base):
     map_y = Column(Float, nullable=True)
     map_connections = Column(Text, nullable=True)         # JSON: "[zone_id, ...]" connected zones
 
+    # Geofenced mobile attendance (added in 0004_geofence).
+    #
+    # These are the coordinates the fence engine and the mobile app actually
+    # use. They were missing from this model, so assigning to them from ORM code
+    # silently did nothing — a warehouse moved from the Warehouses screen wrote
+    # only the legacy varchar latitude/longitude above and the fence stayed put.
+    geofence_enabled = Column(Boolean, default=False)
+    geofence_lat = Column(Numeric(10, 7), nullable=True)
+    geofence_lng = Column(Numeric(10, 7), nullable=True)
+    geofence_radius_m = Column(Integer, nullable=True)
+    geofence_polygon = Column(JSONB, nullable=True)
+    gps_accuracy_max_m = Column(Integer, nullable=True)
+    accuracy_buffer_cap_m = Column(Integer, nullable=True)
+    elevation_m = Column(Float, nullable=True)
+    require_selfie = Column(Boolean, default=False)
+    mobile_terminal_sn = Column(String(20), nullable=True)
+
     # Metadata
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     is_active = Column(Boolean, default=True, server_default='true')
     
     # Relationships (without foreign key constraints to avoid database errors)
-    devices = relationship("Device", back_populates="zone_assignment")
     personnel_assignments = relationship("ZonePersonnelAssignment", back_populates="zone")
-    reader_assignments = relationship("ZoneReaderAssignment", back_populates="zone")
     
     def __repr__(self):
         try:

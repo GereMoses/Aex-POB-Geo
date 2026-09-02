@@ -1,8 +1,14 @@
 from logging.config import fileConfig
 import os
+import sys
 
 from sqlalchemy import engine_from_config, pool
 from alembic import context
+
+# Put this directory on sys.path so version scripts can `import migration_helpers`.
+# Alembic loads each revision by file path, so a sibling module is not otherwise
+# importable from them.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 config = context.config
 
@@ -25,15 +31,13 @@ from app.core.database import Base  # noqa: F401
 
 _alembic_log = _logging.getLogger("alembic.env")
 _MODEL_MODULES = [
-    "access_control", "benefits_management", "biometric_templates",
-    "biotime_enhancements", "biotime_models", "certification", "custom_attributes",
-    "department", "device", "disciplinary_management", "emergency",
-    "emergency_enhanced", "employment_contract", "event", "integrations",
-    "leave_management", "meeting", "mtd", "onboarding", "overtime_management",
-    "payroll", "performance_management", "personnel", "pob_status", "position",
-    "promotion_transfer", "report", "resignation", "roles", "shift_management",
-    "system", "training_management", "user", "vendor_contractor", "visitor",
-    "zone", "zone_reader_assignment",
+    "benefits_management", "biotime_enhancements", "biotime_models",
+    "certification", "custom_attributes", "department",
+    "disciplinary_management", "employment_contract", "event", "integrations",
+    "leave_management", "onboarding", "overtime_management", "payroll",
+    "performance_management", "personnel", "position", "promotion_transfer",
+    "report", "resignation", "roles", "shift_management", "system",
+    "training_management", "user", "vendor_contractor", "zone",
 ]
 for _m in _MODEL_MODULES:
     try:

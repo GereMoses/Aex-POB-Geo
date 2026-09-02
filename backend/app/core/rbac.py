@@ -52,40 +52,39 @@ _ROUTE_RULES = [
     # Attendance
     ("/api/v1/attendance",            frozenset({"GET"}),                               "attendance.view"),
     ("/api/v1/attendance",            frozenset({"POST","PUT","PATCH","DELETE"}),       "attendance.change"),
-    # Devices / BioTime / ZKTeco
-    ("/api/v1/devices",               frozenset({"GET"}),                               "devices.view"),
-    ("/api/v1/devices",               frozenset({"POST","PUT","PATCH","DELETE"}),       "devices.change"),
-    ("/api/v1/biotime",               frozenset({"GET"}),                               "devices.view"),
-    ("/api/v1/biotime",               frozenset({"POST","PUT","PATCH","DELETE"}),       "devices.change"),
-    ("/api/v1/zkteco",                frozenset({"GET","POST","PUT","PATCH","DELETE"}), "devices.sync"),
-    # Access Control
-    ("/api/access-control",           frozenset({"GET"}),                               "access_control.view"),
-    ("/api/access-control",           frozenset({"POST","PUT","PATCH","DELETE"}),       "access_control.change"),
+    # Geofence administration. Reads expose where staff were and the photos taken
+    # of them, so they sit behind attendance.view rather than being open to any
+    # authenticated account — a warehouse employee holds a valid token too.
+    # Writes move warehouse boundaries and can lock a whole site out of clocking
+    # in, so they require the stronger attendance.change.
+    ("/api/v1/geofence",              frozenset({"GET"}),                               "attendance.view"),
+    ("/api/v1/geofence",              frozenset({"POST","PUT","PATCH","DELETE"}),       "attendance.change"),
     # Reports
     ("/api/v1/report",                frozenset({"GET","POST"}),                        "reports.view"),
-    # Visitors
-    ("/api/visitor",                  frozenset({"GET"}),                               "visitors.view"),
-    ("/api/visitor",                  frozenset({"POST","PUT","PATCH","DELETE"}),       "visitors.add"),
-    # Emergency
-    ("/api/emergency",                frozenset({"GET"}),                               "emergency.view"),
-    ("/api/emergency",                frozenset({"POST","PUT","PATCH","DELETE"}),       "emergency.manage"),
-    # Mustering
-    ("/api/mustering",                frozenset({"GET"}),                               "mustering.view"),
-    ("/api/mustering",                frozenset({"POST","PUT","PATCH","DELETE"}),       "mustering.manage"),
-    # POB Status / Zones
-    ("/api/v1/pob-status",            frozenset({"GET"}),                               "pob.view"),
-    ("/api/v1/pob-status",            frozenset({"POST","PUT","PATCH","DELETE"}),       "pob.change"),
+    # Zones
     ("/api/v1/zones",                 frozenset({"GET"}),                               "pob.view"),
     ("/api/v1/zones",                 frozenset({"POST","PUT","PATCH","DELETE"}),       "pob.change"),
     # Payroll / MTD / Meeting (no dedicated permission — map to nearest)
     ("/api/v1/payroll",               frozenset({"GET"}),                               "reports.view"),
     ("/api/v1/payroll",               frozenset({"POST","PUT","PATCH","DELETE"}),       "settings.change"),
-    ("/api/mtd",                      frozenset({"GET"}),                               "reports.view"),
-    ("/api/mtd",                      frozenset({"POST","PUT","PATCH","DELETE"}),       "settings.change"),
-    ("/api/meeting",                  frozenset({"GET"}),                               "reports.view"),
-    ("/api/meeting",                  frozenset({"POST","PUT","PATCH","DELETE"}),       "settings.change"),
+    # Audit. /audit/logs already checks at the endpoint, but /audit/summary and
+    # the rest did not — an ordinary employee could read admin usernames and
+    # 30-day action volumes with their own token.
+    ("/api/v1/audit",                 frozenset({"GET","POST"}),                        "audit.view"),
+    # Operational intelligence: the daily briefing and alert feeds summarise the
+    # whole estate's attendance and exceptions. Same exposure as a report.
+    ("/api/v1/ai",                    frozenset({"GET","POST","PUT","PATCH","DELETE"}), "reports.view"),
+    # Host and database internals — CPU, load, query text, table sizes.
+    ("/api/v1/performance",           frozenset({"GET","POST"}),                        "settings.view"),
+    # Backup and restore operate on the whole database.
+    ("/api/v1/backup",                frozenset({"GET","POST","PUT","PATCH","DELETE"}), "settings.change"),
+    ("/api/v1/database",              frozenset({"GET","POST","PUT","PATCH","DELETE"}), "settings.change"),
+    # Integration config holds third-party credentials.
+    ("/api/v1/hr-integration",        frozenset({"GET","POST","PUT","PATCH","DELETE"}), "settings.change"),
+    ("/api/v1/integrations",          frozenset({"GET","POST","PUT","PATCH","DELETE"}), "settings.change"),
+    # Notifications and subscription state are estate-wide.
+    ("/api/v1/subscription",          frozenset({"PUT","PATCH","DELETE"}),              "settings.change"),
 ]
-
 
 def _match_route_permission(path: str, method: str) -> Optional[str]:
     """Return the required permission codename for this path+method, or None."""
@@ -93,7 +92,6 @@ def _match_route_permission(path: str, method: str) -> Optional[str]:
         if path.startswith(prefix) and method in methods:
             return permission
     return None
-
 
 class RBACMiddleware(BaseHTTPMiddleware):
     """
@@ -115,14 +113,13 @@ class RBACMiddleware(BaseHTTPMiddleware):
             "/health",
             "/favicon.ico",
             "/static",
+            "/clock",   # employee clock PWA — its own login sits behind it
             "/api/auth/",        # all auth endpoints (login, refresh, simple-login, etc.)
             "/api/v1/auth/",
             "/api/v1/mfa/verify",  # MFA handshake: consumes the mfa_pending token the
                                    # RBAC middleware would otherwise reject; the endpoint
                                    # validates that token itself. (Only /verify — the
                                    # other /mfa routes still require a full token + RBAC.)
-            "/iclock/",          # all ZKTeco ADMS endpoints (no auth)
-            "/api/v1/iclock/cdata",
         ]
     
     async def dispatch(self, request: Request, call_next):
@@ -232,7 +229,6 @@ class RBACMiddleware(BaseHTTPMiddleware):
             "/api/v1/health",
             "/api/v1/status",
             "/health",
-            "/iclock/",
         ]
         return any(path.startswith(endpoint) for endpoint in public_endpoints)
     
@@ -372,10 +368,13 @@ class RBACMiddleware(BaseHTTPMiddleware):
                         (:uid, :action, :table_name, :new_values, :ip, :ts)
                 """), {
                     "uid":        user_id,
-                    "action":     action,
-                    "table_name": request.url.path,
+                    "action":     action[:50],
+                    # table_name is varchar(50); request paths routinely exceed that
+                    # and the insert was failing outright, losing the audit row. Keep
+                    # the tail (the specific resource) — the full path is in new_values.
+                    "table_name": request.url.path[-50:],
                     "new_values": f"{method} {request.url.path} → {status_code} | user={username}",
-                    "ip":         request.client.host if request.client else "",
+                    "ip":         (request.client.host if request.client else "")[:45],
                     "ts":         datetime.now(timezone.utc),
                 })
                 db.commit()
@@ -399,7 +398,6 @@ class RBACMiddleware(BaseHTTPMiddleware):
             "DELETE": "delete"
         }
         return action_map.get(method, "unknown")
-
 
 # Permission decorators
 def require_permission(permission_code: str):
@@ -443,7 +441,6 @@ def require_permission(permission_code: str):
         return wrapper
     return decorator
 
-
 def require_any_permission(permission_codes: List[str]):
     """
     Decorator to require any of the specified permissions
@@ -479,7 +476,6 @@ def require_any_permission(permission_codes: List[str]):
         
         return wrapper
     return decorator
-
 
 def require_all_permissions(permission_codes: List[str]):
     """
@@ -519,7 +515,6 @@ def require_all_permissions(permission_codes: List[str]):
         
         return wrapper
     return decorator
-
 
 def require_role(role_name: str):
     """
@@ -575,7 +570,6 @@ def require_role(role_name: str):
         return wrapper
     return decorator
 
-
 def log_operation(module: str, action: str = None):
     """
     Decorator to automatically log operations
@@ -618,7 +612,6 @@ def log_operation(module: str, action: str = None):
         return wrapper
     return decorator
 
-
 async def _log_function_operation(request, user, module: str, action: str,
                               result: str, error_msg: str = None, response_data=None):
     """Log operations via Python logger (OperationLog DB model not yet active)."""
@@ -629,7 +622,6 @@ async def _log_function_operation(request, user, module: str, action: str,
                            action, module, getattr(request, 'url', ''), result, error_msg)
     except Exception:
         pass
-
 
 # FastAPI dependencies
 async def get_current_user_with_permissions(
@@ -659,14 +651,12 @@ async def get_current_user_with_permissions(
     
     return user
 
-
 async def check_permission(permission_code: str, request: Request):
     """
     Check if current user has specific permission
     """
     user_permissions = getattr(request.state, 'user_permissions', [])
     return permission_code in user_permissions
-
 
 # Utility functions
 def clear_user_permission_cache(user_id: int):
@@ -679,7 +669,6 @@ def clear_user_permission_cache(user_id: int):
     except Exception as e:
         logger.error(f"Error clearing permission cache: {e}")
 
-
 def clear_all_permission_cache():
     """Clear all permission caches"""
     try:
@@ -691,7 +680,6 @@ def clear_all_permission_cache():
             logger.info(f"Cleared {len(keys)} permission cache entries")
     except Exception as e:
         logger.error(f"Error clearing all permission caches: {e}")
-
 
 # Permission checking functions — use auth_* tables (BioTime-compatible)
 async def has_permission(user_id: int, permission_code: str, db: Session) -> bool:
@@ -713,7 +701,6 @@ async def has_permission(user_id: int, permission_code: str, db: Session) -> boo
     except Exception as e:
         logger.error(f"Error checking permission: {e}")
         return False
-
 
 async def get_user_permissions_list(user_id: int, db: Session) -> List[str]:
     """Get all permission codenames for a user via auth_* tables."""

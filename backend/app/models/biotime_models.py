@@ -34,12 +34,6 @@ class PersonnelEmployee(Base):
     department = relationship("PersonnelDepartment", back_populates="employees")
     area = relationship("PersonnelArea", back_populates="employees")
     # transactions relationship disabled — linked by emp_code string, no FK
-    organized_meetings = relationship("MeetingBooking", foreign_keys="MeetingBooking.organizer_emp_id", back_populates="organizer")
-    approved_meetings = relationship("MeetingBooking", foreign_keys="MeetingBooking.approval_by", back_populates="approver")
-    meeting_attendances = relationship("MeetingAttendee", back_populates="employee")
-    uploaded_meeting_minutes = relationship("MeetingMinutes", back_populates="uploader")
-    assigned_meeting_actions = relationship("MeetingActionItem", foreign_keys="MeetingActionItem.assignee_emp_id", back_populates="assignee")
-    created_meeting_actions = relationship("MeetingActionItem", foreign_keys="MeetingActionItem.created_by", back_populates="creator")
 
 class PersonnelDepartment(Base):
     __tablename__ = "personnel_department"
@@ -67,7 +61,6 @@ class PersonnelArea(Base):
     # Relationships
     employees = relationship("PersonnelEmployee", back_populates="area")
     terminals = relationship("IClockTerminal", back_populates="area")
-    meeting_rooms = relationship("MeetingRoom", back_populates="area")
 
 # Device Models (BioTime Standard)
 class IClockTerminal(Base):
@@ -113,7 +106,6 @@ class IClockTerminal(Base):
     area = relationship("PersonnelArea", back_populates="terminals")
     transactions = relationship("IClockTransaction", back_populates="terminal")
     doors = relationship("AccDoor", back_populates="terminal")
-    meeting_attendances = relationship("MeetingAttendance", back_populates="device")
 
 class IClockTransaction(Base):
     __tablename__ = "iclock_transaction"
@@ -241,7 +233,6 @@ class AccDoor(Base):
     # Relationships
     terminal = relationship("IClockTerminal", back_populates="doors")
     access_level = relationship("AccLevel", back_populates="doors")
-    meeting_room = relationship("MeetingRoom", back_populates="door", uselist=False)
 
 # Authentication Models (BioTime Standard)
 class AuthUser(Base):

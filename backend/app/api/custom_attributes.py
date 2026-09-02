@@ -75,6 +75,103 @@ async def get_attributes(
         )
 
 
+@router.get("/templates", response_model=dict)
+async def get_attribute_templates(
+    db: Session = Depends(get_db)
+):
+    """
+    Get attribute templates
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        List of attribute templates
+    """
+    try:
+        from ..models.custom_attributes import AttributeTemplate
+        
+        templates = db.query(AttributeTemplate).filter(
+            AttributeTemplate.is_active == True
+        ).order_by(AttributeTemplate.template_name).all()
+        
+        result_templates = []
+        for template in templates:
+            template_data = {
+                "id": template.id,
+                "template_name": template.template_name,
+                "template_code": template.template_code,
+                "description": template.description,
+                "attributes": template.attributes,
+                "category": template.category,
+                "is_system_template": template.is_system_template,
+                "is_active": template.is_active,
+                "created_by": template.created_by,
+                "created_at": template.created_at,
+                "updated_at": template.updated_at,
+                "usage_count": template.usage_count,
+                "last_used": template.last_used,
+                "notes": template.notes
+            }
+            result_templates.append(template_data)
+        
+        return {
+            "success": True,
+            "data": result_templates
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in get_attribute_templates: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+@router.get("/types", response_model=dict)
+async def get_attribute_types():
+    """
+    Get available attribute types
+    
+    Returns:
+        List of attribute types
+    """
+    return {
+        "success": True,
+        "data": [
+            {"value": "TEXT", "label": "Text"},
+            {"value": "NUMBER", "label": "Number"},
+            {"value": "DATE", "label": "Date"},
+            {"value": "BOOLEAN", "label": "Boolean"},
+            {"value": "SELECT", "label": "Select"},
+            {"value": "MULTI_SELECT", "label": "Multi-Select"},
+            {"value": "FILE", "label": "File"},
+            {"value": "EMAIL", "label": "Email"},
+            {"value": "PHONE", "label": "Phone"},
+            {"value": "URL", "label": "URL"}
+        ]
+    }
+
+
+@router.get("/categories", response_model=dict)
+async def get_attribute_categories():
+    """
+    Get available attribute categories
+    
+    Returns:
+        List of attribute categories
+    """
+    return {
+        "success": True,
+        "data": [
+            {"value": "PERSONAL", "label": "Personal Information"},
+            {"value": "PROFESSIONAL", "label": "Professional"},
+            {"value": "MEDICAL", "label": "Medical"},
+            {"value": "EMERGENCY", "label": "Emergency Contact"},
+            {"value": "SYSTEM", "label": "System Information"},
+            {"value": "CUSTOM", "label": "Custom Fields"}
+        ]
+    }
 @router.get("/{attribute_id}", response_model=dict)
 async def get_attribute_by_id(
     attribute_id: int,
@@ -371,59 +468,6 @@ async def upload_personnel_attribute_file(
         )
 
 
-@router.get("/templates", response_model=dict)
-async def get_attribute_templates(
-    db: Session = Depends(get_db)
-):
-    """
-    Get attribute templates
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        List of attribute templates
-    """
-    try:
-        from ..models.custom_attributes import AttributeTemplate
-        
-        templates = db.query(AttributeTemplate).filter(
-            AttributeTemplate.is_active == True
-        ).order_by(AttributeTemplate.template_name).all()
-        
-        result_templates = []
-        for template in templates:
-            template_data = {
-                "id": template.id,
-                "template_name": template.template_name,
-                "template_code": template.template_code,
-                "description": template.description,
-                "attributes": template.attributes,
-                "category": template.category,
-                "is_system_template": template.is_system_template,
-                "is_active": template.is_active,
-                "created_by": template.created_by,
-                "created_at": template.created_at,
-                "updated_at": template.updated_at,
-                "usage_count": template.usage_count,
-                "last_used": template.last_used,
-                "notes": template.notes
-            }
-            result_templates.append(template_data)
-        
-        return {
-            "success": True,
-            "data": result_templates
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in get_attribute_templates: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-
 @router.post("/templates", response_model=dict)
 async def create_attribute_template(
     template: AttributeTemplateCreate,
@@ -473,47 +517,3 @@ async def create_attribute_template(
         )
 
 
-@router.get("/types", response_model=dict)
-async def get_attribute_types():
-    """
-    Get available attribute types
-    
-    Returns:
-        List of attribute types
-    """
-    return {
-        "success": True,
-        "data": [
-            {"value": "TEXT", "label": "Text"},
-            {"value": "NUMBER", "label": "Number"},
-            {"value": "DATE", "label": "Date"},
-            {"value": "BOOLEAN", "label": "Boolean"},
-            {"value": "SELECT", "label": "Select"},
-            {"value": "MULTI_SELECT", "label": "Multi-Select"},
-            {"value": "FILE", "label": "File"},
-            {"value": "EMAIL", "label": "Email"},
-            {"value": "PHONE", "label": "Phone"},
-            {"value": "URL", "label": "URL"}
-        ]
-    }
-
-
-@router.get("/categories", response_model=dict)
-async def get_attribute_categories():
-    """
-    Get available attribute categories
-    
-    Returns:
-        List of attribute categories
-    """
-    return {
-        "success": True,
-        "data": [
-            {"value": "PERSONAL", "label": "Personal Information"},
-            {"value": "PROFESSIONAL", "label": "Professional"},
-            {"value": "MEDICAL", "label": "Medical"},
-            {"value": "EMERGENCY", "label": "Emergency Contact"},
-            {"value": "SYSTEM", "label": "System Information"},
-            {"value": "CUSTOM", "label": "Custom Fields"}
-        ]
-    }

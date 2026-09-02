@@ -50,7 +50,6 @@ logger = logging.getLogger(__name__)
 # Holds refs to all long-running background tasks so shutdown can cancel them cleanly.
 _background_tasks: list = []
 
-
 async def _supervised(name: str, loop_func, max_backoff: float = 30.0):
     """
     Run a `while True` background loop forever, auto-restarting it with capped
@@ -131,12 +130,7 @@ app.add_middleware(RBACMiddleware, exclude_paths=[
     "/api/v1/mfa/verify",
     # Subscription public endpoints — no auth required
     "/api/v1/subscription/status", "/api/v1/subscription/activate",
-    # ZKTeco ADMS device endpoints — device-initiated, no user auth
-    "/iclock/cdata", "/iclock/getrequest", "/iclock/devicecmd", "/iclock/test",
-    "/api/v1/iclock/cdata", "/api/v1/iclock/getrequest",
-    "/api/v1/iclock/devicecmd", "/api/v1/iclock/test",
     # Visitor kiosk public self-service endpoints
-    "/api/visitor/kiosk/check-in", "/api/visitor/kiosk/types",
     # SeamlessHR employee webhook — called by SeamlessHR, verified via HMAC signature
     "/api/v1/hr-integration/webhook",
     # Global search and SSE notifications (token via query param)
@@ -145,6 +139,9 @@ app.add_middleware(RBACMiddleware, exclude_paths=[
     "/api/v1/attendance/punch-stream",
     # Static file serving — browser <img> tags cannot send Authorization headers
     "/uploads/", "/media/",
+    # Employee clock PWA — a static page that carries its own sign-in. The API
+    # calls it makes are authenticated normally.
+    "/clock",
 ])
 logger.info("✅ RBAC middleware enabled for comprehensive access control")
 
@@ -156,7 +153,7 @@ _LICENSE_BYPASS_PREFIXES = (
     "/api/v1/docs", "/api/v1/redoc", "/api/v1/openapi.json",
     "/api/v1/auth/",
     "/api/v1/subscription/status", "/api/v1/subscription/activate",
-    "/iclock/", "/api/v1/iclock/",
+    "/clock",
     # Machine-to-machine callbacks that authenticate by their own means and have
     # no bearer token to offer. Readers push on /iclock/; SeamlessHR posts
     # HMAC-SHA512-signed employee events here. Blocking these on licence state
@@ -171,7 +168,6 @@ from starlette.responses import JSONResponse as _JSONResponse
 from jose import jwt as _jwt, JWTError as _JWTError
 
 _license_cache: dict = {"expires_at": 0.0, "status": "unknown", "days": 0}
-
 
 def _check_license_db() -> tuple[str, int]:
     """Synchronous DB check — returns (status, days_remaining). Cached 60 s."""
@@ -199,7 +195,6 @@ def _check_license_db() -> tuple[str, int]:
         return "active", 9999  # fail-open: don't block if DB check errors
     finally:
         db.close()
-
 
 class LicenseMiddleware(_BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
@@ -273,7 +268,6 @@ class LicenseMiddleware(_BaseHTTPMiddleware):
             },
         )
 
-
 app.add_middleware(LicenseMiddleware)
 logger.info("✅ License enforcement middleware enabled")
 
@@ -299,10 +293,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("X-XSS-Protection", "1; mode=block")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        response.headers.setdefault(
-            "Permissions-Policy",
-            "camera=(), microphone=(), geolocation=()"
-        )
+        # The employee clock-in page is served from this app and genuinely needs
+        # the camera and geolocation — a blanket geolocation=() disables them for
+        # the page itself, not just third parties, so the PWA could never obtain
+        # a fix or take a selfie. Grant them to self on that path only; every
+        # other response keeps the restrictive policy.
+        if request.url.path.startswith("/clock"):
+            response.headers.setdefault(
+                "Permissions-Policy",
+                "camera=(self), microphone=(), geolocation=(self)"
+            )
+        else:
+            response.headers.setdefault(
+                "Permissions-Policy",
+                "camera=(), microphone=(), geolocation=()"
+            )
         # HSTS — only in production (meaningless/ harmful over plain HTTP in dev).
         # Sourced from SECURE_HSTS_SECONDS so the config value is actually applied.
         if settings.ENVIRONMENT == "production":
@@ -371,6 +376,12 @@ print("✅ BioTime 9.5 compatible authentication enabled")
 import pathlib
 for _d in ("uploads", "media"):
     pathlib.Path(_d).mkdir(parents=True, exist_ok=True)
+# Employee clock PWA. Served from the app rather than nginx so it is available
+# wherever the API is, including a bare `uvicorn` run for testing.
+_clock_dir = pathlib.Path(__file__).parent / "static" / "clock"
+if _clock_dir.is_dir():
+    app.mount("/clock", StaticFiles(directory=str(_clock_dir), html=True), name="clock")
+
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.mount("/media", StaticFiles(directory="media"), name="media")
 
@@ -391,8 +402,6 @@ except Exception as e:
     logger.warning(f"ARIA AI router not loaded: {e}", exc_info=True)
 
 # ADMS protocol endpoints — no authentication, device-initiated, MUST be at root
-from .api.adms_protocol import router as adms_router
-app.include_router(adms_router, tags=["ADMS Protocol"])
 
 # Prometheus metrics — must be instrumented at module level, before app starts
 try:
@@ -405,67 +414,6 @@ try:
     logger.info("✅ Prometheus metrics endpoint active at /metrics")
 except ImportError:
     logger.debug("prometheus-fastapi-instrumentator not installed — /metrics disabled")
-
-
-def _sync_time_one_pass() -> None:
-    """Synchronous inner body of the time-sync loop — runs in a thread pool."""
-    from .api.adms_protocol import queue_clock_sync, STATE_APPROVED, _get_direct_device
-    from .models.biotime_models import IClockTerminal
-    db = SessionLocal()
-    try:
-        terminals = db.query(IClockTerminal).filter(IClockTerminal.state == STATE_APPROVED).all()
-        for t in terminals:
-            dev = _get_direct_device(t.sn, db)
-            if dev and (dev.connection_mode or '').lower() in ('direct', 'both'):
-                continue  # direct sync handled by async caller
-            try:
-                # ADMS-correct clock command (SET OPTIONS DateTime=<enc>); push
-                # firmware rejects the ZKLib-style "DATE TIME <str>" as UNKNOWN CMD.
-                queue_clock_sync(t.sn, db)
-            except Exception as te:
-                logger.warning(f"Time sync ADMS queue failed for {t.sn}: {te}")
-        logger.info(f"Hourly ADMS time-sync queued for {len(terminals)} reader(s)")
-    finally:
-        db.close()
-
-
-async def _time_sync_loop():
-    """Hourly: sync clocks on all approved readers. DB work runs off the event loop."""
-    from .api.adms_protocol import STATE_APPROVED, _direct_sync_time, _get_direct_device
-    from .models.biotime_models import IClockTerminal
-
-    await asyncio.sleep(10)
-    logger.info("Time sync loop started — initial sync now, then every hour")
-
-    while True:
-        try:
-            # Direct-IP devices: async TCP sync — stays on the event loop (non-blocking)
-            db = SessionLocal()
-            try:
-                direct_devs = [
-                    (t.sn, dev)
-                    for t in db.query(IClockTerminal).filter(IClockTerminal.state == STATE_APPROVED).all()
-                    if (dev := _get_direct_device(t.sn, db)) and (dev.connection_mode or '').lower() in ('direct', 'both')
-                ]
-            finally:
-                db.close()
-
-            for sn, dev in direct_devs:
-                try:
-                    result = await _direct_sync_time(dev.ip_address, dev.port)
-                    if not result.get('success'):
-                        logger.warning(f"Direct sync failed {sn}: {result.get('error')}")
-                except Exception as exc:
-                    logger.warning(f"Direct sync exception {sn}: {exc}")
-
-            # ADMS queue for push-only devices — blocking DB write, run in thread
-            await asyncio.to_thread(_sync_time_one_pass)
-
-        except Exception as e:
-            logger.error(f"Time sync loop error: {e}")
-
-        await asyncio.sleep(3600)
-
 
 def _attendance_query_pending(yesterday) -> list:
     """Synchronous DB query for employees needing attendance recalculation."""
@@ -502,7 +450,6 @@ def _attendance_query_pending(yesterday) -> list:
         return [r.emp_id for r in rows]
     finally:
         db.close()
-
 
 async def _attendance_auto_calc_loop():
     """Periodic catch-all attendance recalc. DB query runs in thread pool."""
@@ -542,56 +489,6 @@ async def _attendance_auto_calc_loop():
         # Sleep for the remainder of the 900s interval so runs don't overlap
         elapsed = _time.monotonic() - _start
         await asyncio.sleep(max(0, 900 - elapsed))
-
-
-def _drill_check_one_pass(now, retry_cutoff) -> None:
-    """Synchronous drill scheduler body — runs in a thread pool."""
-    from .models.biotime_models import MusteringDrillSchedule
-    from .services.mustering_service import MusteringService
-    db = SessionLocal()
-    try:
-        expired = db.query(MusteringDrillSchedule).filter(
-            MusteringDrillSchedule.processed == False,
-            MusteringDrillSchedule.auto_start == True,
-            MusteringDrillSchedule.scheduled_time < retry_cutoff,
-        ).all()
-        for schedule in expired:
-            schedule.processed = True
-            schedule.processed_time = now
-            schedule.status = "EXPIRED"
-            logger.warning(f"Drill schedule {schedule.id} expired for zone {schedule.zone_id}")
-        if expired:
-            db.commit()
-
-        due = db.query(MusteringDrillSchedule).filter(
-            MusteringDrillSchedule.processed == False,
-            MusteringDrillSchedule.auto_start == True,
-            MusteringDrillSchedule.scheduled_time <= now,
-            MusteringDrillSchedule.scheduled_time >= retry_cutoff,
-        ).all()
-
-        for schedule in due:
-            try:
-                service = MusteringService(db)
-                service.start_mustering_event(
-                    zone_id=schedule.zone_id,
-                    event_type=schedule.event_type,
-                    initiated_by=schedule.created_by or 1,
-                    notes=f"Auto-triggered drill (schedule #{schedule.id})",
-                )
-                schedule.processed = True
-                schedule.processed_time = now
-                schedule.status = "TRIGGERED"
-                db.commit()
-                logger.info(f"Auto-triggered drill schedule {schedule.id} for zone {schedule.zone_id}")
-            except ValueError as ve:
-                logger.info(f"Drill schedule {schedule.id} deferred (zone {schedule.zone_id} busy): {ve}")
-            except Exception as e:
-                logger.error(f"Failed to auto-trigger drill schedule {schedule.id}: {e}")
-                db.rollback()
-    finally:
-        db.close()
-
 
 async def _seamlesshr_nightly_sync_loop():
     """
@@ -655,7 +552,6 @@ async def _seamlesshr_nightly_sync_loop():
 
         await asyncio.sleep(60)
 
-
 async def _bc_nightly_sync_loop():
     """Background loop: push attendance to Business Central at the configured sync time."""
     from .services.business_central_service import get_bc_config, push_attendance as bc_push
@@ -712,82 +608,6 @@ async def _bc_nightly_sync_loop():
 
         await asyncio.sleep(60)
 
-
-async def _drill_auto_end_loop():
-    """
-    Every 60 s: auto-end any active mustering event that has exceeded its
-    max_duration_minutes. This prevents forgotten drills from locking access
-    control in drill mode indefinitely.
-
-    Drills with max_duration_minutes=0 are never auto-ended.
-    """
-    await asyncio.sleep(60)  # brief startup delay
-    while True:
-        try:
-            def _check_and_end():
-                db = SessionLocal()
-                try:
-                    # max_duration_minutes column may not exist in older migrations — skip if absent
-                    has_col = db.execute(text("""
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name='mustering_event' AND column_name='max_duration_minutes'
-                    """)).fetchone()
-                    if not has_col:
-                        return
-
-                    now = datetime.now(timezone.utc)
-                    stale = db.execute(text("""
-                        SELECT id, start_time, max_duration_minutes, event_type
-                        FROM mustering_event
-                        WHERE status = 0
-                          AND max_duration_minutes > 0
-                          AND start_time + (max_duration_minutes || ' minutes')::interval < :now
-                    """), {"now": now}).fetchall()
-                    for row in stale:
-                        db.execute(text("""
-                            UPDATE mustering_event
-                            SET status = 2, end_time = :now,
-                                notes = COALESCE(notes,'') || ' [AUTO-ENDED: exceeded max_duration_minutes]'
-                            WHERE id = :eid
-                        """), {"now": now, "eid": row.id})
-                        logger.warning(
-                            "Auto-ended mustering event id=%s (event_type=%s, started=%s, max=%s min)",
-                            row.id, row.event_type, row.start_time, row.max_duration_minutes,
-                        )
-                    if stale:
-                        db.commit()
-                except Exception as exc:
-                    db.rollback()
-                    logger.error("Drill auto-end loop error: %s", exc)
-                finally:
-                    db.close()
-
-            await asyncio.to_thread(_check_and_end)
-        except asyncio.CancelledError:
-            logger.info("Drill auto-end loop stopped")
-            break
-        except Exception as exc:
-            logger.error("Drill auto-end outer error: %s", exc)
-
-        await asyncio.sleep(60)
-
-
-async def _drill_scheduler_loop():
-    """Background loop: auto-trigger drill schedules. DB runs off the event loop."""
-    logger.info("Drill scheduler started — polling every 30 s")
-    while True:
-        try:
-            now = datetime.now(timezone.utc)
-            await asyncio.to_thread(_drill_check_one_pass, now, now - timedelta(minutes=30))
-        except asyncio.CancelledError:
-            logger.info("Drill scheduler stopped")
-            break
-        except Exception as e:
-            logger.error(f"Drill scheduler loop error: {e}")
-
-        await asyncio.sleep(30)
-
-
 _LEADER_KEY = "pob:background_leader"
 _LEADER_TTL = 30   # seconds — leader must renew within this window
 # Renewal happens every _LEADER_RENEW_INTERVAL. Must be well under _LEADER_TTL
@@ -795,10 +615,8 @@ _LEADER_TTL = 30   # seconds — leader must renew within this window
 # At TTL=30s and interval=8s we have 3 full renewal cycles before expiry.
 _LEADER_RENEW_INTERVAL = 8
 
-
 _LEADER_RETRY_INTERVAL = 5   # how often a non-leader worker re-checks whether it can take over
 _leader_pid: Optional[str] = None  # set once this process becomes leader; used by shutdown to release cleanly
-
 
 async def _release_leader_lock() -> None:
     """
@@ -823,7 +641,6 @@ async def _release_leader_lock() -> None:
             logger.info("Worker PID=%s released background-task leader lock", _leader_pid)
     except Exception as exc:
         logger.warning("Failed to release leader lock on shutdown: %s", exc)
-
 
 async def _leader_election_loop(start_device_tasks) -> None:
     """
@@ -865,7 +682,6 @@ async def _leader_election_loop(start_device_tasks) -> None:
 
         await asyncio.sleep(_LEADER_RENEW_INTERVAL if is_leader else _LEADER_RETRY_INTERVAL)
 
-
 @app.on_event("startup")
 async def startup_event():
     """Application startup event"""
@@ -898,18 +714,6 @@ async def startup_event():
         except Exception as _ie:
             logger.warning("Index creation skipped: %s", _ie)
 
-        # Ensure the device-deletion suppression table exists (sticky UI deletes)
-        try:
-            from .api.adms_protocol import _ensure_suppression_table
-            from .core.database import SessionLocal as _SL2
-            _sup_db = _SL2()
-            try:
-                _ensure_suppression_table(_sup_db)
-                _sup_db.commit()
-            finally:
-                _sup_db.close()
-        except Exception as _se:
-            logger.warning("Suppression table init skipped: %s", _se)
     else:
         logger.error("❌ Database connection failed")
 
@@ -928,41 +732,15 @@ async def startup_event():
     except Exception as _sse_exc:
         logger.warning("SSE Redis subscriber not started: %s", _sse_exc)
 
-    # ── Leader election: only ONE worker runs ZKLib/device background tasks ──
-    # With --workers N, every worker would otherwise open 4x concurrent ZKLib
-    # connections per device (readers only accept 1) and quadruple-trigger
-    # drills/nightly syncs. _leader_election_loop runs on every worker for the
-    # process lifetime: whichever one holds the Redis lock starts the device
-    # tasks; if that worker ever dies without releasing the lock, another
-    # worker automatically takes over once the lease expires — no manual
-    # restart needed to restore device monitoring.
+    # ── Leader election: only ONE worker runs the scheduled background jobs ──
+    # With --workers N, every worker would otherwise trigger the nightly syncs
+    # and the attendance recalculation independently. _leader_election_loop runs
+    # on every worker; whichever holds the Redis lock runs the jobs, and if that
+    # worker dies without releasing the lock another takes over once the lease
+    # expires.
     async def _start_leader_only_tasks() -> None:
         _background_tasks.append(asyncio.create_task(_attendance_auto_calc_loop()))
-        _background_tasks.append(asyncio.create_task(_drill_auto_end_loop()))
-        logger.info("✅ Attendance auto-calc + drill auto-end started (leader)")
-
-        _background_tasks.append(asyncio.create_task(_supervised("time_sync_loop", _time_sync_loop)))
-        logger.info("✅ Reader time-sync loop started (leader, auto-restart on crash)")
-
-        from .services.zkteco.device_poller import poller_loop
-        _background_tasks.append(asyncio.create_task(_supervised("device_poller", poller_loop)))
-        logger.info("✅ ZKTeco device poller started (leader, auto-restart on crash)")
-
-        # C3/inBio access controllers are PULL-only (no ADMS push) — this loop pulls
-        # their realtime events into the shared zone engine so controller badges
-        # update current_zone_id + occupancy just like ADMS readers do.
-        from .services.access_controller_ingest import controller_poller_loop
-        _background_tasks.append(asyncio.create_task(_supervised("controller_poller", controller_poller_loop)))
-        logger.info("✅ Access-controller poller started (leader, auto-restart on crash)")
-
-        from .services.zkteco.live_capture import live_capture_supervisor
-        _background_tasks.append(asyncio.create_task(_supervised("live_capture_supervisor", live_capture_supervisor)))
-        logger.info("✅ ZKTeco live capture supervisor started (leader, auto-restart on crash)")
-
-        from .services.zkteco.device_heartbeat import heartbeat_loop, reset_stale_states
-        reset_stale_states()
-        _background_tasks.append(asyncio.create_task(_supervised("device_heartbeat", heartbeat_loop)))
-        logger.info("✅ ZKTeco device heartbeat started (leader, auto-restart on crash)")
+        logger.info("✅ Attendance auto-calc started (leader)")
 
         _background_tasks.append(asyncio.create_task(_seamlesshr_nightly_sync_loop()))
         _background_tasks.append(asyncio.create_task(_bc_nightly_sync_loop()))
@@ -1017,6 +795,7 @@ async def startup_event():
     # Guarded by a checksum so this is a no-op on every boot after the first: the
     # file is only re-applied when it actually changes. Every statement in
     # incremental.sql is idempotent (IF NOT EXISTS / OR REPLACE / ON CONFLICT).
+    _upgrade_schema_to_head()
     _apply_pending_migrations()
 
     # Say out loud which build this is. A deploy that pulled the repo but never
@@ -1032,6 +811,54 @@ async def startup_event():
         )
     else:
         logger.info(f"✅ Running build {_sha} (built {_built})")
+
+def _upgrade_schema_to_head() -> None:
+    """Bring the schema to the latest Alembic revision.
+
+    db-init runs this on a full `docker compose up`, but `docker compose restart`
+    skips db-init entirely — so without this the code moves forward while the
+    schema stays put. That gap is how the geofence tables could be missing from a
+    running deployment.
+
+    Guarded by a Postgres advisory lock so concurrent backend replicas cannot run
+    Alembic against each other. Never raises: a backend that refuses to boot is
+    worse than one reporting loudly that its schema is behind.
+    """
+    from pathlib import Path as _Path
+    from sqlalchemy import text as _text
+
+    ini = _Path("/app/alembic.ini")
+    if not ini.exists():
+        logger.debug("No alembic.ini — skipping schema upgrade")
+        return
+
+    # Arbitrary but fixed key; any process using the same key serialises with us.
+    LOCK_KEY = 776_712_001
+
+    db = SessionLocal()
+    try:
+        got = db.execute(_text("SELECT pg_try_advisory_lock(:k)"), {"k": LOCK_KEY}).scalar()
+        if not got:
+            logger.info("Another process is applying migrations — skipping")
+            return
+        try:
+            from alembic.config import Config as _AlembicConfig
+            from alembic import command as _alembic_command
+
+            cfg = _AlembicConfig(str(ini))
+            cfg.set_main_option("script_location", "/app/alembic")
+            _alembic_command.upgrade(cfg, "head")
+            logger.info("✅ Schema at Alembic head")
+        finally:
+            db.execute(_text("SELECT pg_advisory_unlock(:k)"), {"k": LOCK_KEY})
+            db.commit()
+    except Exception as e:
+        logger.error(
+            "Alembic upgrade FAILED at startup — the schema may be behind the "
+            "code: %s. Run `docker compose up -d` to re-run db-init.", e
+        )
+    finally:
+        db.close()
 
 
 def _apply_pending_migrations() -> None:
@@ -1112,7 +939,6 @@ def _apply_pending_migrations() -> None:
 
     logger.info("🚀 Application startup complete")
 
-
 @app.on_event("shutdown")
 async def shutdown_event():
     """Application shutdown event — cancel background tasks and close shared clients."""
@@ -1142,7 +968,6 @@ async def shutdown_event():
 
     logger.info("✅ Shutdown complete")
 
-
 @app.get("/")
 async def root():
     """Root endpoint"""
@@ -1152,7 +977,6 @@ async def root():
         "docs": f"{settings.API_V1_STR}/docs",
         "status": "running"
     }
-
 
 @app.get("/health")
 async def health_check():
@@ -1167,7 +991,6 @@ async def health_check():
         "build": _os.getenv("APP_GIT_SHA", "unknown"),
         "built_at": _os.getenv("APP_BUILD_TIME", "unknown"),
     }
-
 
 @app.get("/status")
 async def detailed_status():
@@ -1188,7 +1011,6 @@ async def detailed_status():
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT,
     }
-
 
 if __name__ == "__main__":
     uvicorn.run(

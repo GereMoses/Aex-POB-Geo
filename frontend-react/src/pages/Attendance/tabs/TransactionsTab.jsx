@@ -120,7 +120,8 @@ const TransactionsTab = () => {
 
   const { data: areasData } = useQuery({
     queryKey: ['ta-areas'],
-    queryFn:  () => apiService.get('/api/device/areas/'),
+    // Warehouses replaced the old device areas as the location filter.
+    queryFn:  () => apiService.get('/api/v1/zones/dashboard'),
     staleTime: 60000,
   });
   const areas = Array.isArray(areasData) ? areasData : [];

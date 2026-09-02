@@ -13,7 +13,8 @@ from ..core.database import get_db
 from ..services.vendor_contractor_service import vendor_contractor_service
 from ..schemas.vendor_contractor import (
     VendorCreate, VendorUpdate, VendorResponse, VendorContractCreate, VendorContractResponse,
-    ContractorCreate, ContractorResponse, ContractAssignmentCreate, ContractAssignmentResponse,
+    ContractorCreate, ContractorUpdate, ContractorResponse,
+    ContractAssignmentCreate, ContractAssignmentResponse,
     VendorComplianceCreate, VendorComplianceResponse, VendorStatisticsResponse,
     BulkVendorAction, BulkVendorResponse, VendorSearchResponse
 )
@@ -70,6 +71,96 @@ async def get_vendors(
             )
     except Exception as e:
         logger.error(f"Error in get_vendors: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+@router.get("/vendors/contracts", response_model=dict)
+async def get_vendor_contracts(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
+    vendor_id: Optional[int] = Query(None, description="Filter by vendor ID"),
+    status: Optional[str] = Query(None, description="Filter by contract status"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get vendor contracts
+    
+    Args:
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        vendor_id: Filter by vendor ID
+        status: Filter by contract status
+        db: Database session
+        
+    Returns:
+        List of vendor contracts
+    """
+    try:
+        from ..models.vendor_contractor import VendorContract, Vendor
+        
+        query = db.query(VendorContract)
+        
+        if vendor_id:
+            query = query.filter(VendorContract.vendor_id == vendor_id)
+        
+        if status:
+            query = query.filter(VendorContract.status == status)
+        
+        contracts = query.order_by(desc(VendorContract.created_at)).offset(skip).limit(limit).all()
+        
+        result_contracts = []
+        for contract in contracts:
+            contract_data = {
+                "id": contract.id,
+                "vendor_id": contract.vendor_id,
+                "contract_number": contract.contract_number,
+                "contract_name": contract.contract_name,
+                "contract_type": contract.contract_type,
+                "status": contract.status.value,
+                "start_date": contract.start_date,
+                "end_date": contract.end_date,
+                "renewal_date": contract.renewal_date,
+                "notice_period_days": contract.notice_period_days,
+                "total_value": contract.total_value,
+                "currency": contract.currency,
+                "payment_terms": contract.payment_terms,
+                "billing_frequency": contract.billing_frequency,
+                "sla_requirements": contract.sla_requirements,
+                "penalty_clauses": contract.penalty_clauses,
+                "scope_of_work": contract.scope_of_work,
+                "deliverables": contract.deliverables,
+                "key_performance_indicators": contract.key_performance_indicators,
+                "contract_manager": contract.contract_manager,
+                "legal_reviewer": contract.legal_reviewer,
+                "approved_by": contract.approved_by,
+                "approved_at": contract.approved_at,
+                "performance_score": contract.performance_score,
+                "compliance_score": contract.compliance_score,
+                "last_performance_review": contract.last_performance_review,
+                "created_by": contract.created_by,
+                "created_at": contract.created_at,
+                "updated_by": contract.updated_by,
+                "updated_at": contract.updated_at,
+                "notes": contract.notes
+            }
+            
+            # Add vendor info
+            if contract.vendor:
+                contract_data["vendor_name"] = contract.vendor.vendor_name
+                contract_data["vendor_code"] = contract.vendor.vendor_code
+            
+            result_contracts.append(contract_data)
+        
+        return {
+            "success": True,
+            "data": result_contracts
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in get_vendor_contracts: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}"
@@ -276,96 +367,6 @@ async def create_vendor_contract(
         )
 
 
-@router.get("/vendors/contracts", response_model=dict)
-async def get_vendor_contracts(
-    skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
-    vendor_id: Optional[int] = Query(None, description="Filter by vendor ID"),
-    status: Optional[str] = Query(None, description="Filter by contract status"),
-    db: Session = Depends(get_db)
-):
-    """
-    Get vendor contracts
-    
-    Args:
-        skip: Number of records to skip
-        limit: Maximum number of records to return
-        vendor_id: Filter by vendor ID
-        status: Filter by contract status
-        db: Database session
-        
-    Returns:
-        List of vendor contracts
-    """
-    try:
-        from ..models.vendor_contractor import VendorContract, Vendor
-        
-        query = db.query(VendorContract)
-        
-        if vendor_id:
-            query = query.filter(VendorContract.vendor_id == vendor_id)
-        
-        if status:
-            query = query.filter(VendorContract.status == status)
-        
-        contracts = query.order_by(desc(VendorContract.created_at)).offset(skip).limit(limit).all()
-        
-        result_contracts = []
-        for contract in contracts:
-            contract_data = {
-                "id": contract.id,
-                "vendor_id": contract.vendor_id,
-                "contract_number": contract.contract_number,
-                "contract_name": contract.contract_name,
-                "contract_type": contract.contract_type,
-                "status": contract.status.value,
-                "start_date": contract.start_date,
-                "end_date": contract.end_date,
-                "renewal_date": contract.renewal_date,
-                "notice_period_days": contract.notice_period_days,
-                "total_value": contract.total_value,
-                "currency": contract.currency,
-                "payment_terms": contract.payment_terms,
-                "billing_frequency": contract.billing_frequency,
-                "sla_requirements": contract.sla_requirements,
-                "penalty_clauses": contract.penalty_clauses,
-                "scope_of_work": contract.scope_of_work,
-                "deliverables": contract.deliverables,
-                "key_performance_indicators": contract.key_performance_indicators,
-                "contract_manager": contract.contract_manager,
-                "legal_reviewer": contract.legal_reviewer,
-                "approved_by": contract.approved_by,
-                "approved_at": contract.approved_at,
-                "performance_score": contract.performance_score,
-                "compliance_score": contract.compliance_score,
-                "last_performance_review": contract.last_performance_review,
-                "created_by": contract.created_by,
-                "created_at": contract.created_at,
-                "updated_by": contract.updated_by,
-                "updated_at": contract.updated_at,
-                "notes": contract.notes
-            }
-            
-            # Add vendor info
-            if contract.vendor:
-                contract_data["vendor_name"] = contract.vendor.vendor_name
-                contract_data["vendor_code"] = contract.vendor.vendor_code
-            
-            result_contracts.append(contract_data)
-        
-        return {
-            "success": True,
-            "data": result_contracts
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in get_vendor_contracts: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-
 @router.post("/contractors", response_model=dict)
 async def create_contractor(
     contractor: ContractorCreate,
@@ -507,6 +508,158 @@ async def get_contractors(
         
     except Exception as e:
         logger.error(f"Error in get_contractors: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+@router.put("/contractors/{contractor_id}", response_model=dict)
+async def update_contractor(
+    contractor_id: int,
+    contractor: ContractorUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Update an existing contractor
+
+    Args:
+        contractor_id: Contractor ID
+        contractor: Fields to change (unset fields are left untouched)
+        db: Database session
+
+    Returns:
+        Updated contractor details
+    """
+    try:
+        from ..models.vendor_contractor import Contractor
+
+        record = db.query(Contractor).filter(Contractor.id == contractor_id).first()
+        if not record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Contractor not found"
+            )
+
+        updates = contractor.dict(exclude_unset=True)
+
+        # contractor_code is the business key — reject a collision rather than
+        # letting the unique index surface as a 500.
+        new_code = updates.get("contractor_code")
+        if new_code and new_code != record.contractor_code:
+            clash = db.query(Contractor).filter(
+                Contractor.contractor_code == new_code,
+                Contractor.id != contractor_id
+            ).first()
+            if clash:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Contractor code '{new_code}' is already in use"
+                )
+
+        for field, value in updates.items():
+            setattr(record, field, value)
+        record.updated_by = 1
+
+        db.commit()
+        db.refresh(record)
+
+        return {
+            "success": True,
+            "data": {
+                "id": record.id,
+                "vendor_id": record.vendor_id,
+                "contractor_code": record.contractor_code,
+                "first_name": record.first_name,
+                "last_name": record.last_name,
+                "email": record.email,
+                "phone": record.phone,
+                "job_title": record.job_title,
+                "specialization": record.specialization,
+                "status": record.status,
+                "availability_status": record.availability_status,
+                "updated_at": record.updated_at,
+            },
+            "message": "Contractor updated successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error in update_contractor: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+@router.delete("/vendors/{vendor_id}", response_model=dict)
+async def delete_vendor(
+    vendor_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a vendor.
+
+    Refused while contracts or contractors still reference the vendor — those
+    records carry attendance and payment history and must be reassigned first.
+
+    Args:
+        vendor_id: Vendor ID
+        db: Database session
+
+    Returns:
+        Deletion confirmation
+    """
+    try:
+        from ..models.vendor_contractor import (
+            Vendor, VendorContract, Contractor, VendorCompliance
+        )
+
+        vendor = db.query(Vendor).filter(Vendor.id == vendor_id).first()
+        if not vendor:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Vendor not found"
+            )
+
+        contract_count = db.query(VendorContract).filter(
+            VendorContract.vendor_id == vendor_id
+        ).count()
+        contractor_count = db.query(Contractor).filter(
+            Contractor.vendor_id == vendor_id
+        ).count()
+
+        if contract_count or contractor_count:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Cannot delete vendor: {contract_count} contract(s) and "
+                    f"{contractor_count} contractor(s) still reference it. "
+                    "Reassign or remove those records first."
+                )
+            )
+
+        # Compliance rows are vendor-owned with no history worth keeping once the
+        # vendor is gone, so they go with it.
+        db.query(VendorCompliance).filter(
+            VendorCompliance.vendor_id == vendor_id
+        ).delete(synchronize_session=False)
+
+        db.delete(vendor)
+        db.commit()
+
+        return {
+            "success": True,
+            "message": "Vendor deleted successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error in delete_vendor: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}"

@@ -6,10 +6,7 @@ _logger = logging.getLogger(__name__)
 # Core APIs - Essential Only
 from .auth import router as auth_router
 from .personnel import router as personnel_router
-from .devices import router as devices_router
-from .pob_status import router as pob_status_router
 from .zones import router as zones_router
-from .zone_assignments import router as zone_assignments_router
 from .departments import router as departments_router
 from .roles import router as roles_router
 
@@ -19,12 +16,8 @@ from .biotime_personnel import router as biotime_personnel_router
 from .biotime_attendance_api import router as biotime_attendance_router
 
 # ZKTeco APIs - Essential Only
-from .zkteco import router as zkteco_router
-from .biometric import router as biometric_router
 
 # ADMS Protocol is registered in main.py at root level (no /api/v1 prefix)
-# so ZKTeco devices reach /iclock/cdata directly. Import only for reference.
-from .adms_protocol import router as adms_protocol_router  # noqa: F401
 
 # Health & System
 from .health import router as health_router
@@ -68,12 +61,8 @@ api_router.include_router(vendor_contractor_router, prefix="/personnel", tags=["
 
 # Generic personnel router LAST — its /{personnel_id} pattern must not shadow the above
 api_router.include_router(personnel_router, prefix="/personnel", tags=["Personnel Management"])
-api_router.include_router(devices_router, tags=["Device Management"])
-api_router.include_router(pob_status_router, prefix="/pob-status", tags=["POB Status"])
-# NOTE: attendance, access_control, visitor, mustering, device_management are registered
 # directly in main.py with their own full-path prefixes — do NOT double-register here.
 api_router.include_router(zones_router, prefix="/zones", tags=["Zone Management"])
-api_router.include_router(zone_assignments_router, tags=["Zone Assignments"])
 api_router.include_router(departments_router, tags=["Department Management"])
 api_router.include_router(roles_router, prefix="/roles", tags=["Role Management"])
 
@@ -88,21 +77,8 @@ api_router.include_router(biotime_auth_router, prefix="/biotime/auth", tags=["Bi
 api_router.include_router(biotime_personnel_router, prefix="/biotime", tags=["BioTime Personnel"])
 api_router.include_router(biotime_attendance_router, prefix="/biotime", tags=["BioTime Attendance"])
 
-# ZKTeco Device APIs
-api_router.include_router(zkteco_router, prefix="/zkteco", tags=["ZKTeco Devices"])
-api_router.include_router(biometric_router, tags=["Biometric Management"])
 
-# ZKTeco Direct IP Connection (port 4370 / ZKLib protocol)
-from .zkteco_direct import router as zkteco_direct_router
-api_router.include_router(zkteco_direct_router, prefix="/zkteco", tags=["ZKTeco Direct IP"])
 
-# Access-Control Controllers (LAN inBio/C3 panels — separate from ADMS readers)
-from .access_controllers import router as access_controllers_router
-api_router.include_router(access_controllers_router, tags=["Access Control Controllers"])
-
-# Device Auto-Discovery (pending ADMS approvals + on-demand network scan)
-from .device_discovery import router as device_discovery_router
-api_router.include_router(device_discovery_router, tags=["Device Auto-Discovery"])
 
 # System & Health
 api_router.include_router(health_router, prefix="/health", tags=["Health Checks"])
@@ -129,11 +105,6 @@ api_router.include_router(hr_integration_router, prefix="/hr-integration", tags=
 from .bc_integration import router as bc_integration_router
 api_router.include_router(bc_integration_router, prefix="/bc-integration", tags=["Business Central Integration"])
 
-# Transport Manifest & Reconciliation
-from .transport_manifest import router as transport_manifest_router
-api_router.include_router(transport_manifest_router, tags=["Transport Manifest"])
-from .journey_management import router as journey_management_router
-api_router.include_router(journey_management_router, tags=["Journey Management"])
 
 # Performance Monitoring
 from .performance_monitoring import router as performance_router
@@ -159,44 +130,12 @@ direct_router = APIRouter()
 from .attendance import router as attendance_router
 from .settings import router as settings_router
 from .email_settings import router as email_settings_router
-from .access_control import router as access_control_router
-from .visitor import router as visitor_router
-from .device_management import router as device_management_router_direct
-from .mustering import router as mustering_router_direct
 
 direct_router.include_router(attendance_router, tags=["Attendance"])
 direct_router.include_router(settings_router, tags=["Settings"])
 direct_router.include_router(email_settings_router, tags=["Email Settings"])
-direct_router.include_router(access_control_router, tags=["Access Control"])
-direct_router.include_router(visitor_router, tags=["Visitor Management"])
-direct_router.include_router(device_management_router_direct, tags=["Device Management Direct"])
-direct_router.include_router(mustering_router_direct, tags=["Mustering Direct"])
 
 # Optional direct routers (wrapped — missing deps or incomplete modules)
-try:
-    from .device_access_control import router as device_ac_router
-    direct_router.include_router(device_ac_router, tags=["Device Access Control"])
-except Exception as e:
-    _logger.warning(f"Device Access Control API disabled: {e}")
-
-try:
-    from .device_enrollment import router as device_enrollment_router
-    direct_router.include_router(device_enrollment_router, tags=["Device Enrollment"])
-except Exception as e:
-    _logger.warning(f"Device Enrollment API disabled: {e}")
-
-try:
-    from .emergency import router as emergency_api_router
-    direct_router.include_router(emergency_api_router, tags=["Emergency Management"])
-except Exception as e:
-    _logger.warning(f"Emergency API disabled: {e}")
-
-try:
-    from .mtd import router as mtd_api_router
-    direct_router.include_router(mtd_api_router, tags=["MTD"])
-except Exception as e:
-    _logger.warning(f"MTD API disabled: {e}")
-
 try:
     from .payroll import router as payroll_api_router
     direct_router.include_router(payroll_api_router, tags=["Payroll"])
@@ -208,12 +147,6 @@ try:
     direct_router.include_router(payroll_statutory_router, tags=["Payroll Statutory (NG)"])
 except Exception as e:
     _logger.warning(f"Payroll Statutory API disabled: {e}")
-
-try:
-    from .meeting import router as meeting_api_router
-    direct_router.include_router(meeting_api_router, tags=["Meeting"])
-except Exception as e:
-    _logger.warning(f"Meeting API disabled: {e}")
 
 try:
     from .report import router as report_api_router
@@ -228,12 +161,6 @@ except Exception as e:
     _logger.warning(f"BioTime Analytics API disabled: {e}")
 
 # Device WebSocket — authenticated real-time device status streams
-try:
-    from .device_websocket import router as device_ws_router
-    direct_router.include_router(device_ws_router, tags=["Device WebSocket"])
-except Exception as e:
-    _logger.warning(f"Device WebSocket disabled: {e}")
-
 # Compliance email — manual trigger + preview
 try:
     from .compliance_email_api import router as compliance_email_router
@@ -258,7 +185,11 @@ except Exception as e:
 # Global search — cross-module entity lookup
 try:
     from .search import router as search_router
-    api_router.include_router(search_router, tags=["Global Search"])
+    # search.py declares its own full "/api/v1/search" prefix, so mounting it on
+    # api_router (which adds /api/v1 again) produced /api/v1/api/v1/search and a
+    # permanent 404. It belongs on direct_router, like the other
+    # full-path routers.
+    direct_router.include_router(search_router, tags=["Global Search"])
 except Exception as e:
     _logger.warning(f"Global Search API disabled: {e}")
 
@@ -283,8 +214,14 @@ try:
 except Exception as e:
     _logger.warning(f"Reports (PDF) API disabled: {e}")
 
-# NOTE: mustering_emergency_api, qr_codes exist as files but are intentionally
 # not registered — they are unfinished modules. Register when complete.
+
+# Geofence administration — fence config, bulk site import, exception queue
+try:
+    from .geofence_admin import router as geofence_admin_router
+    api_router.include_router(geofence_admin_router)
+except Exception as e:
+    _logger.warning(f"Geofence Administration API disabled: {e}")
 
 # Export for main app
 __all__ = ["api_router", "direct_router"]

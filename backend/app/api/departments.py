@@ -14,7 +14,6 @@ from ..models.zone import Zone
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
 
-
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 DEPT_TYPES = [
@@ -23,7 +22,6 @@ DEPT_TYPES = [
 ]
 
 DEPT_STATUSES = ["active", "inactive", "temporary", "under_review"]
-
 
 class DepartmentCreate(BaseModel):
     name:            str            = Field(..., min_length=1, max_length=100)
@@ -46,7 +44,6 @@ class DepartmentCreate(BaseModel):
     safety_protocols:            Optional[Any]  = None
     access_levels:               Optional[Any]  = None
     zkteco_sync_enabled:         Optional[bool] = True
-
 
 class DepartmentUpdate(BaseModel):
     name:            Optional[str]  = Field(None, max_length=100)
@@ -72,14 +69,12 @@ class DepartmentUpdate(BaseModel):
     is_active:            Optional[bool] = None
     default_shift_id:     Optional[int]  = None
 
-
 class PersonnelAssignCreate(BaseModel):
     personnel_id: int
     role:         str            = Field(..., max_length=100)
     position:     Optional[str] = Field(None, max_length=100)
     is_primary:   Optional[bool] = False
     is_manager:   Optional[bool] = False
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -91,7 +86,6 @@ def _zkteco_status(dept: Department) -> str:
     if dept.last_sync_at:
         return "synced"
     return "pending"
-
 
 def _to_dict(dept: Department, db: Session) -> dict:
     # Count active personnel assigned to this department via personnel.department_id —
@@ -174,7 +168,6 @@ def _to_dict(dept: Department, db: Session) -> dict:
         "updated_by":           dept.updated_by,
     }
 
-
 # ── Static routes (all must come before /{department_id}) ────────────────────
 
 @router.get("/meta/summary")
@@ -225,66 +218,13 @@ async def department_summary(
         "by_status":              by_status,
     }
 
-
-@router.get("/meta/zkteco-compare")
-async def zkteco_compare(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    local_depts   = db.query(Department).filter(Department.is_active == True).all()
-    biotime_depts = db.query(BioTimeDept).all()
-    biotime_by_id = {b.id: b for b in biotime_depts}
-    linked_ids    = set()
-
-    matched    = []
-    local_only = []
-
-    for d in local_depts:
-        bt = biotime_by_id.get(d.zkteco_department_id)
-        if bt:
-            matched.append({
-                "local_id":    d.id,
-                "local_name":  d.name,
-                "local_code":  d.code,
-                "biotime_id":  bt.id,
-                "biotime_name": bt.dept_name,
-                "biotime_code": bt.dept_code,
-                "name_match":  d.name.lower() == bt.dept_name.lower(),
-                "code_match":  d.code.lower() == (bt.dept_code or "").lower(),
-            })
-            linked_ids.add(bt.id)
-        else:
-            local_only.append({
-                "local_id":              d.id,
-                "local_name":            d.name,
-                "local_code":            d.code,
-                "zkteco_department_id":  d.zkteco_department_id,
-            })
-
-    biotime_only = [
-        {"biotime_id": b.id, "biotime_name": b.dept_name, "biotime_code": b.dept_code}
-        for b in biotime_depts if b.id not in linked_ids
-    ]
-
-    return {
-        "matched":        matched,
-        "local_only":     local_only,
-        "biotime_only":   biotime_only,
-        "total_local":    len(local_depts),
-        "total_biotime":  len(biotime_depts),
-        "total_matched":  len(matched),
-    }
-
-
 @router.get("/types", response_model=List[str])
 async def get_department_types():
     return DEPT_TYPES
 
-
 @router.get("/statuses", response_model=List[str])
 async def get_department_statuses():
     return DEPT_STATUSES
-
 
 @router.get("/hierarchy/tree")
 async def get_hierarchy(
@@ -308,7 +248,6 @@ async def get_hierarchy(
         ]
 
     return build_tree()
-
 
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
@@ -335,7 +274,6 @@ async def list_departments(
     depts = q.order_by(Department.sort_order, Department.name).offset(skip).limit(limit).all()
     return [_to_dict(d, db) for d in depts]
 
-
 @router.get("/{department_id}")
 async def get_department(
     department_id: int,
@@ -346,7 +284,6 @@ async def get_department(
     if not dept:
         raise HTTPException(status_code=404, detail="Department not found")
     return _to_dict(dept, db)
-
 
 @router.post("", status_code=201)
 async def create_department(
@@ -366,7 +303,6 @@ async def create_department(
     db.refresh(dept)
     return _to_dict(dept, db)
 
-
 @router.put("/{department_id}")
 async def update_department(
     department_id: int,
@@ -383,7 +319,6 @@ async def update_department(
     db.commit()
     db.refresh(dept)
     return _to_dict(dept, db)
-
 
 @router.delete("/{department_id}", status_code=204)
 async def delete_department(
@@ -407,7 +342,6 @@ async def delete_department(
     dept.status = "inactive"
     dept.updated_by = current_user.id
     db.commit()
-
 
 # ── Personnel assignments ──────────────────────────────────────────────────────
 
@@ -450,7 +384,6 @@ async def get_department_personnel(
         }
         for p in rows
     ]
-
 
 @router.post("/{department_id}/assign-personnel", status_code=201)
 async def assign_personnel(
@@ -509,7 +442,6 @@ async def assign_personnel(
     return {"id": assignment.id, "department_id": department_id, "personnel_id": data.personnel_id,
             "status": "active", "primary_department_id": getattr(person, "department_id", None)}
 
-
 @router.delete("/{department_id}/personnel/{personnel_id}", status_code=204)
 async def remove_personnel(
     department_id: int,
@@ -548,7 +480,6 @@ async def remove_personnel(
 
     db.commit()
 
-
 # ── ZKTeco sync ───────────────────────────────────────────────────────────────
 
 @router.post("/{department_id}/push-to-biotime")
@@ -579,31 +510,6 @@ async def push_to_biotime(
     db.refresh(dept)
     return _to_dict(dept, db)
 
-
-@router.put("/{department_id}/zkteco-sync")
-async def update_zkteco_sync(
-    department_id:       int,
-    zkteco_department_id: Optional[int]  = None,
-    zkteco_sync_enabled:  Optional[bool] = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    dept = db.query(Department).filter(Department.id == department_id).first()
-    if not dept:
-        raise HTTPException(status_code=404, detail="Department not found")
-    if zkteco_department_id is not None:
-        dept.zkteco_department_id = zkteco_department_id
-    if zkteco_sync_enabled is not None:
-        dept.zkteco_sync_enabled = zkteco_sync_enabled
-    dept.last_sync_at = datetime.utcnow()
-    dept.updated_by = current_user.id
-    db.commit()
-    db.refresh(dept)
-    return _to_dict(dept, db)
-
-
-# ── Reactivate ─────────────────────────────────────────────────────────────────
-
 @router.patch("/{department_id}/reactivate")
 async def reactivate_department(
     department_id: int,
@@ -620,13 +526,11 @@ async def reactivate_department(
     db.refresh(dept)
     return _to_dict(dept, db)
 
-
 # ── Clone ──────────────────────────────────────────────────────────────────────
 
 class DepartmentClonePayload(BaseModel):
     name: Optional[str] = None
     code: str = Field(..., min_length=1, max_length=20)
-
 
 @router.post("/{department_id}/clone", status_code=201)
 async def clone_department(
@@ -672,13 +576,11 @@ async def clone_department(
     db.refresh(new_dept)
     return _to_dict(new_dept, db)
 
-
 # ── Budget spend ───────────────────────────────────────────────────────────────
 
 class BudgetSpendPayload(BaseModel):
     amount: float = Field(..., gt=0)
     description: Optional[str] = None
-
 
 @router.post("/{department_id}/log-budget-spend")
 async def log_budget_spend(
@@ -698,7 +600,6 @@ async def log_budget_spend(
     db.refresh(dept)
     return _to_dict(dept, db)
 
-
 # ── Transfer personnel ─────────────────────────────────────────────────────────
 
 class PersonnelTransferPayload(BaseModel):
@@ -708,7 +609,6 @@ class PersonnelTransferPayload(BaseModel):
     position: Optional[str] = Field(None, max_length=100)
     is_primary: Optional[bool] = False
     is_manager: Optional[bool] = False
-
 
 @router.post("/{department_id}/transfer-personnel")
 async def transfer_personnel_endpoint(

@@ -1,9 +1,9 @@
 """
 Celery task wrapper for the compliance email digest.
-Registered in mustering_celery_tasks.py beat_schedule.
+Registered in celery_app.py beat_schedule.
 """
 import logging
-from app.services.mustering_celery_tasks import celery_app
+from app.services.celery_app import celery_app
 from app.tasks.compliance_email_task import send_compliance_digest
 
 logger = logging.getLogger(__name__)

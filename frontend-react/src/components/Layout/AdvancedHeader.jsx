@@ -354,12 +354,12 @@ const AdvancedHeader = ({ collapsed, onToggleSidebar, onToggleFullscreen, isFull
             marginRight: '24px'
           }}>
             <img
-              src="/logo/image.png"
-              alt="Marconi.ng EPC Limited"
+              src={`${process.env.PUBLIC_URL || ''}/logo/apex-mark.png`}
+              alt="Apex POB"
               style={{ width: 32, height: 32, objectFit: 'contain', borderRadius: 6 }}
             />
             <Title level={4} style={{ margin: '0 0 0 10px', color: '#262626', fontSize: 15 }}>
-              Marconi.ng EPC Limited
+              Apex POB
             </Title>
           </div>
 

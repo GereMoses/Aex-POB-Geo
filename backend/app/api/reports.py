@@ -13,7 +13,6 @@ from ..core.dependencies import get_current_user
 
 router = APIRouter(prefix="/api/v1/reports", tags=["Reports"])
 
-
 # ── PDF helpers ───────────────────────────────────────────────────────────────
 
 def _pdf_response(pdf_bytes: bytes, filename: str) -> StreamingResponse:
@@ -22,7 +21,6 @@ def _pdf_response(pdf_bytes: bytes, filename: str) -> StreamingResponse:
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
 
 def _build_pdf(title: str, subtitle: str, headers: list, rows: list,
                col_widths: list = None) -> bytes:
@@ -79,15 +77,12 @@ def _build_pdf(title: str, subtitle: str, headers: list, rows: list,
 
     return bytes(pdf.output())
 
-
 _FORMULA_CHARS = ('=', '+', '-', '@', '\t', '\r')
-
 
 def _safe_cell(v) -> str:
     """Neutralise CSV formula injection: prefix dangerous leading chars with a tab."""
     s = str(v) if v is not None else ""
     return ("\t" + s) if s and s[0] in _FORMULA_CHARS else s
-
 
 def _csv_response(rows: list, headers: list, filename: str) -> StreamingResponse:
     buf = io.StringIO()
@@ -101,7 +96,6 @@ def _csv_response(rows: list, headers: list, filename: str) -> StreamingResponse
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
 
 @router.get("/attendance/csv")
 async def attendance_csv(
@@ -135,7 +129,6 @@ async def attendance_csv(
         f"attendance_{start}_{end}.csv",
     )
 
-
 @router.get("/compliance/csv")
 async def compliance_csv(
     days: int = Query(default=60),
@@ -163,7 +156,6 @@ async def compliance_csv(
         "compliance_report.csv",
     )
 
-
 @router.get("/pob/csv")
 async def pob_csv(
     db: Session = Depends(get_db),
@@ -185,32 +177,6 @@ async def pob_csv(
         f"pob_report_{date.today()}.csv",
     )
 
-
-@router.get("/visitors/csv")
-async def visitors_csv(
-    start_date: str = Query(default=None),
-    end_date: str = Query(default=None),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    start = start_date or (date.today() - timedelta(days=30)).isoformat()
-    end   = end_date   or date.today().isoformat()
-    rows = db.execute(text("""
-        SELECT vv.full_name, vv.phone, vv.email, vv.company,
-               vl.check_in_time, vl.check_out_time,
-               CASE vl.status WHEN 0 THEN 'On-site' WHEN 1 THEN 'Checked-out' ELSE 'Other' END AS status
-        FROM vis_visit_log vl
-        LEFT JOIN vis_visitor vv ON vv.id = vl.visitor_id
-        WHERE vl.check_in_time::date BETWEEN :start AND :end
-        ORDER BY vl.check_in_time DESC LIMIT 2000
-    """), {"start": start, "end": end}).fetchall()
-    return _csv_response(
-        [[r.full_name, r.phone, r.email, r.company, r.check_in_time, r.check_out_time, r.status] for r in rows],
-        ["Name", "Phone", "Email", "Company", "Check In", "Check Out", "Status"],
-        f"visitors_{start}_{end}.csv",
-    )
-
-
 @router.get("/leave/csv")
 async def leave_csv(
     db: Session = Depends(get_db),
@@ -229,7 +195,6 @@ async def leave_csv(
         ["Employee", "Emp Code", "Leave Type", "Start", "End", "Days", "Status", "Reason"],
         "leave_report.csv",
     )
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PDF ENDPOINTS
@@ -273,7 +238,6 @@ async def attendance_pdf(
     )
     return _pdf_response(pdf, f"attendance_{start}_{end}.pdf")
 
-
 @router.get("/compliance/pdf")
 async def compliance_pdf(
     days: int = Query(default=60),
@@ -305,7 +269,6 @@ async def compliance_pdf(
     )
     return _pdf_response(pdf, "compliance_report.pdf")
 
-
 @router.get("/pob/pdf")
 async def pob_pdf(
     db: Session = Depends(get_db),
@@ -333,33 +296,3 @@ async def pob_pdf(
     )
     return _pdf_response(pdf, f"pob_report_{date.today()}.pdf")
 
-
-@router.get("/visitors/pdf")
-async def visitors_pdf(
-    start_date: str = Query(default=None),
-    end_date: str = Query(default=None),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    start = start_date or (date.today() - timedelta(days=30)).isoformat()
-    end   = end_date   or date.today().isoformat()
-    rows = db.execute(text("""
-        SELECT vv.full_name, vv.phone, vv.email, vv.company,
-               vl.check_in_time::text, vl.check_out_time::text,
-               CASE vl.status WHEN 0 THEN 'On-site' WHEN 1 THEN 'Checked-out' ELSE 'Other' END AS status
-        FROM vis_visit_log vl
-        LEFT JOIN vis_visitor vv ON vv.id = vl.visitor_id
-        WHERE vl.check_in_time::date BETWEEN :start AND :end
-        ORDER BY vl.check_in_time DESC LIMIT 2000
-    """), {"start": start, "end": end}).fetchall()
-
-    data = [[r.full_name or "", r.phone or "", r.email or "", r.company or "",
-             str(r.check_in_time or ""), str(r.check_out_time or ""), r.status] for r in rows]
-    pdf = _build_pdf(
-        "Visitor Log Report",
-        f"Period: {start} to {end}",
-        ["Name", "Phone", "Email", "Company", "Check In", "Check Out", "Status"],
-        data,
-        col_widths=[40, 28, 48, 40, 36, 36, 22],
-    )
-    return _pdf_response(pdf, f"visitors_{start}_{end}.pdf")

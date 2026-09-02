@@ -76,10 +76,10 @@ const POBExtensionsTab = ({ structures }) => {
       const { record } = zoneModal;
       if (record) {
         await apiCall(`/api/v1/payroll/zone-allowances/${record.id}`, { method: 'PUT', body: JSON.stringify(values) });
-        message.success('Zone allowance updated');
+        message.success('Warehouse allowance updated');
       } else {
         await apiCall('/api/v1/payroll/zone-allowances/', { method: 'POST', body: JSON.stringify(values) });
-        message.success('Zone allowance created');
+        message.success('Warehouse allowance created');
       }
       setZoneModal({ open: false, record: null });
       await fetchZones();
@@ -117,7 +117,7 @@ const POBExtensionsTab = ({ structures }) => {
       },
     },
     {
-      title: 'Zone / Area', key: 'area',
+      title: 'Warehouse / Area', key: 'area',
       render: (_, r) => (
         <Space>
           {r.is_hazard && <FireOutlined style={{ color: '#dc2626' }} />}
@@ -174,8 +174,8 @@ const POBExtensionsTab = ({ structures }) => {
   return (
     <div>
       <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
-        <StatCard label="Zone Rules" value={zones.length} color="#d97706" icon={<EnvironmentOutlined />} sub={`${hazardZones.length} hazard`} />
-        <StatCard label="Hazard Zones" value={hazardZones.length} color="#dc2626" icon={<FireOutlined />} />
+        <StatCard label="Warehouse Rules" value={zones.length} color="#d97706" icon={<EnvironmentOutlined />} sub={`${hazardZones.length} hazard`} />
+        <StatCard label="Hazard Warehouses" value={hazardZones.length} color="#dc2626" icon={<FireOutlined />} />
         <StatCard label="Contractor Rate Rules" value={rates.length} color="#7c3aed" icon={<TeamOutlined />} sub={`${activeRates.length} active`} />
         <StatCard label="Active POB Structures" value={structures.filter(s => s.is_active).length} color="#2563eb" icon={<SafetyOutlined />} />
       </div>
@@ -189,17 +189,17 @@ const POBExtensionsTab = ({ structures }) => {
             key: 'zone',
             label: (
               <span>
-                <EnvironmentOutlined /> Zone Allowances{' '}
+                <EnvironmentOutlined /> Warehouse Allowances{' '}
                 <span style={{ display: 'inline-block', padding: '0 6px', borderRadius: 999, fontSize: 10, fontWeight: 700, color: '#fff', background: '#d97706', marginLeft: 4 }}>{zones.length}</span>
               </span>
             ),
             children: (
               <div style={{ paddingTop: 12 }}>
-                <Alert type="info" showIcon style={{ marginBottom: 12 }} message="Zone Allowances"
+                <Alert type="info" showIcon style={{ marginBottom: 12 }} message="Warehouse Allowances"
                   description={<span>Define location-based pay that is <b>automatically added</b> during payroll calculation when an employee has recorded attendance in a matching area/zone. Supports hourly, daily, and fixed rates plus hazard premiums.</span>} />
                 <div style={{ background: '#fff', borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #f0f0f0' }}>
-                    <Text strong><EnvironmentOutlined style={{ marginRight: 4 }} />Zone Allowance Rules</Text>
+                    <Text strong><EnvironmentOutlined style={{ marginRight: 4 }} />Warehouse Allowance Rules</Text>
                     <Button type="primary" size="small" icon={<PlusOutlined />}
                       onClick={() => { zoneForm.resetFields(); zoneForm.setFieldsValue({ allowance_type: 1, is_hazard: false, is_active: true }); setZoneModal({ open: true, record: null }); }}>
                       New Rule
@@ -238,9 +238,9 @@ const POBExtensionsTab = ({ structures }) => {
         ]}
       />
 
-      {/* Zone Allowance Modal */}
+      {/* Warehouse Allowance Modal */}
       <Modal
-        title={<span><EnvironmentOutlined /> {zoneModal.record ? 'Edit' : 'New'} Zone Allowance Rule</span>}
+        title={<span><EnvironmentOutlined /> {zoneModal.record ? 'Edit' : 'New'} Warehouse Allowance Rule</span>}
         open={zoneModal.open}
         onOk={saveZone}
         onCancel={() => setZoneModal({ open: false, record: null })}
@@ -257,8 +257,8 @@ const POBExtensionsTab = ({ structures }) => {
               </Form.Item>
             </Col>
             <Col span={10}>
-              <Form.Item name="area_id" label="Area / Zone ID" rules={[{ required: true }]}>
-                <InputNumber min={1} style={{ width: '100%' }} placeholder="Zone ID" />
+              <Form.Item name="area_id" label="Area / Warehouse ID" rules={[{ required: true }]}>
+                <InputNumber min={1} style={{ width: '100%' }} placeholder="Warehouse ID" />
               </Form.Item>
             </Col>
           </Row>
@@ -281,7 +281,7 @@ const POBExtensionsTab = ({ structures }) => {
           <Divider style={{ margin: '8px 0' }}>Hazard Premium</Divider>
           <Row gutter={12} align="middle">
             <Col span={10}>
-              <Form.Item name="is_hazard" label="Hazard Zone" valuePropName="checked">
+              <Form.Item name="is_hazard" label="Hazard Warehouse" valuePropName="checked">
                 <Switch checkedChildren={<><FireOutlined /> Yes</>} unCheckedChildren="No" />
               </Form.Item>
             </Col>

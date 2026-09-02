@@ -77,35 +77,46 @@ const StatusPill = ({ status }) => {
   );
 };
 
-// ── BiometricChips ─────────────────────────────────────────────────────────────
-const BiometricChips = ({ rec }) => {
-  const hasFp   = rec.biometric_enrolled || rec.fingerprint_enrolled;
-  const hasFace = rec.face_enrolled;
-  const hasCard = !!(rec.badge_id && rec.badge_id !== rec.emp_code);
-  const chip = (enrolled, label, icon, colors) => (
-    <Tooltip title={enrolled ? `${label} enrolled` : `No ${label}`}>
-      <span style={{
-        display: 'inline-flex', alignItems: 'center', gap: 3,
-        padding: '2px 7px', borderRadius: 5, fontSize: 10, fontWeight: 600,
-        background: enrolled ? colors.bg : '#f9fafb',
-        border:     `1px solid ${enrolled ? colors.border : '#e5e7eb'}`,
-        color:      enrolled ? colors.text : '#9ca3af',
-      }}>
-        {icon}{label}
-      </span>
-    </Tooltip>
-  );
+// ── WarehouseChips ────────────────────────────────────────────────────────────
+// Which warehouses this person may clock in at. With clocking done on phones
+// there is no card or fingerprint to show; the assignment is what decides
+// whether they get through the gate, so that is what the card shows.
+const WarehouseChips = ({ rec }) => {
+  const sites = rec.assigned_warehouses || [];
+  if (!sites.length) {
+    return (
+      <Tooltip title="Not assigned to any warehouse — every clock-in will be refused">
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 3,
+          padding: '2px 7px', borderRadius: 5, fontSize: 10, fontWeight: 600,
+          background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626',
+        }}>
+          <AlertOutlined style={{ fontSize: 9 }} />No warehouse
+        </span>
+      </Tooltip>
+    );
+  }
   return (
-    <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-      {chip(hasFp,   'FP',   <ScanOutlined style={{ fontSize: 9 }} />,         { bg: '#f0fdf4', border: '#bbf7d0', text: '#16a34a' })}
-      {chip(hasFace, 'Face', <UserOutlined style={{ fontSize: 9 }} />,         { bg: '#fffbeb', border: '#fed7aa', text: '#b45309' })}
-      {chip(hasCard, 'Card', <CreditCardOutlined style={{ fontSize: 9 }} />,   { bg: '#eff6ff', border: '#bfdbfe', text: '#1d4ed8' })}
-    </div>
+    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+      {sites.slice(0, 3).map((w) => (
+        <Tooltip key={w.zone_id} title={w.name}>
+          <span style={{
+            padding: '2px 7px', borderRadius: 5, fontSize: 10, fontWeight: 600,
+            background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#047857',
+          }}>{w.code}</span>
+        </Tooltip>
+      ))}
+      {sites.length > 3 && (
+        <Tooltip title={sites.slice(3).map((w) => w.name).join(', ')}>
+          <span style={{ fontSize: 10, color: '#6b7280' }}>+{sites.length - 3}</span>
+        </Tooltip>
+      )}
+    </span>
   );
 };
 
 // ── EmployeeCard (grid view) ────────────────────────────────────────────────────
-const EmployeeCard = ({ rec, onView, onEdit, onDelete, onDeactivate, isNonCompliant, ncItems }) => {
+const EmployeeCard = ({ rec, onView, onEdit, onDelete, onDeactivate }) => {
   const name = rec.full_name || `${rec.first_name || ''} ${rec.last_name || ''}`.trim();
   return (
     <div
@@ -188,20 +199,11 @@ const EmployeeCard = ({ rec, onView, onEdit, onDelete, onDeactivate, isNonCompli
 
         {/* biometrics */}
         <div style={{ marginBottom: 8 }}>
-          <BiometricChips rec={rec} />
+          <WarehouseChips rec={rec} />
         </div>
 
         {/* compliance + last seen */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#94a3b8' }}>
-          {isNonCompliant ? (
-            <span style={{ color: '#dc2626', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}>
-              <AlertOutlined style={{ fontSize: 10 }} />{ncItems?.length || 0} MTD issue{(ncItems?.length || 0) !== 1 ? 's' : ''}
-            </span>
-          ) : (
-            <span style={{ color: '#16a34a', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
-              <CheckCircleOutlined style={{ fontSize: 10 }} />MTD OK
-            </span>
-          )}
           {rec.last_seen && (
             <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
               <ClockCircleOutlined style={{ fontSize: 9 }} />
@@ -688,7 +690,6 @@ const PersonnelList = () => {
   const [detailVisible, setDetailVisible] = useState(false);
   const [detailRecord,  setDetailRecord]  = useState(null);
 
-
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [importVisible,   setImportVisible]   = useState(false);
 
@@ -735,22 +736,13 @@ const PersonnelList = () => {
     queryFn: () => apiService.get('/api/v1/zones/'),
   });
 
-  const { data: ncData } = useQuery({
-    queryKey: ['mtd-non-compliant'],
-    queryFn: () => apiService.get('/api/mtd/compliance/non-compliant/'),
-    staleTime: 60000,
-  });
-
   // ── Derived data ───────────────────────────────────────────────────────────
-  const ncList   = Array.isArray(ncData?.data?.data) ? ncData.data.data
-                 : Array.isArray(ncData?.data)        ? ncData.data : [];
-  const ncMap    = new Map(ncList.map(p => [p.emp_id, p.missing_items ?? []]));
 
   const employees   = personnelData?.results || [];
   const totalCount  = personnelData?.count ?? employees.length;
   const deptList    = Array.isArray(departmentsData) ? departmentsData : (departmentsData?.results || []);
   const zoneList    = Array.isArray(zonesData) ? zonesData : (zonesData?.results || []);
-  const zoneMap     = new Map(zoneList.map(z => [z.id, z.name || z.zone_name || `Zone ${z.id}`]));
+  const zoneMap     = new Map(zoneList.map(z => [z.id, z.name || z.zone_name || `Warehouse ${z.id}`]));
 
   // unique companies from loaded slice (server-side filtering now handles the rest)
   const companyList = [...new Set(employees.map(e => e.company).filter(Boolean))].sort();
@@ -765,15 +757,6 @@ const PersonnelList = () => {
   const safetyCount     = employees.filter(e => e.safety_critical).length;
 
   // ── Mutations ──────────────────────────────────────────────────────────────
-  const newHireMTDMutation = useMutation({
-    mutationFn: ({ emp_id, hire_date }) =>
-      apiService.post('/api/mtd/compliance/setup-new-hire/', { emp_id, hire_date }),
-    onSuccess: (res) => {
-      const count = res?.data?.data?.created?.length ?? 0;
-      if (count > 0) message.info(`MTD: ${res.data.data.message}`);
-      queryClient.invalidateQueries(['mtd-non-compliant']);
-    },
-  });
 
   const uploadPhotoMutation = useMutation({
     mutationFn: ({ id, file }) => apiService.upload(`/api/v1/personnel/${id}/upload-photo`, file),
@@ -802,11 +785,6 @@ const PersonnelList = () => {
       if (photoFile && savedId) {
         uploadPhotoMutation.mutate({ id: savedId, file: photoFile });
         setPhotoFile(null);
-      }
-      // MTD setup for new employee
-      if (isNew && savedId) {
-        const hireDate = form.getFieldValue('hire_date');
-        newHireMTDMutation.mutate({ emp_id: savedId, hire_date: hireDate ? hireDate.format('YYYY-MM-DD') : null });
       }
     },
     onError: (err) => message.error(err?.response?.data?.detail || err.message || 'Operation failed'),
@@ -903,7 +881,10 @@ const PersonnelList = () => {
       status:                  (rec.status || 'ACTIVE').toUpperCase(),
       is_onboard:              rec.is_onboard || false,
       safety_critical:         rec.safety_critical || false,
-      zone_id:                 rec.current_zone_id,
+      // The complete set of warehouses this employee may clock in at.
+      // Sourced from the assignment table, which is what the geofence engine
+      // and the mobile app actually read.
+      warehouse_ids:           (rec.assigned_warehouses || []).map((w) => w.zone_id),
       blood_group:             rec.blood_group,
       emergency_contact_name:  rec.emergency_contact_name,
       emergency_contact_phone: rec.emergency_contact_phone,
@@ -939,7 +920,7 @@ const PersonnelList = () => {
         status:                  values.status   || 'ACTIVE',
         is_onboard:              values.is_onboard    || false,
         safety_critical:         values.safety_critical || false,
-        current_zone_id:         values.zone_id   || null,
+        warehouse_ids:           values.warehouse_ids || [],
         blood_group:             values.blood_group || null,
         emergency_contact_name:  values.emergency_contact_name  || null,
         emergency_contact_phone: values.emergency_contact_phone || null,
@@ -949,22 +930,6 @@ const PersonnelList = () => {
   };
 
   const openDetail = (rec) => { setDetailRecord(rec); setDetailVisible(true); };
-
-  const [syncing, setSyncing] = useState(false);
-
-  const handleBioTimeSync = async () => {
-    setSyncing(true);
-    try {
-      const res = await apiService.post('/api/v1/personnel/sync/biotime', { force: false });
-      const count = res?.data?.synced_count ?? res?.synced_count ?? '?';
-      message.success(`BioTime sync complete — ${count} records synced`);
-      queryClient.invalidateQueries(['personnel']);
-    } catch (e) {
-      message.error(e?.response?.data?.detail || 'BioTime sync failed');
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   const handleExport = async () => {
     try {
@@ -1124,38 +1089,13 @@ const PersonnelList = () => {
         const quality = rec.biometric_quality_score;
         return (
           <div>
-            <BiometricChips rec={rec} />
+            <WarehouseChips rec={rec} />
             {rec.biometric_enrolled && quality != null && (
               <div style={{ marginTop: 4, fontSize: 10, color: quality >= 80 ? '#16a34a' : quality >= 50 ? '#b45309' : '#dc2626' }}>
                 Quality: {quality}%
               </div>
             )}
           </div>
-        );
-      },
-    },
-    {
-      title: 'MTD',
-      key: 'mtd',
-      width: 70,
-      align: 'center',
-      render: (_, rec) => {
-        const missing = ncMap.get(rec.id);
-        if (missing && missing.length > 0) {
-          return (
-            <Tooltip title={`Non-Compliant: ${missing.join(', ')}`}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626', borderRadius: 20, padding: '2px 8px', fontSize: 10, fontWeight: 700, cursor: 'default' }}>
-                <AlertOutlined style={{ fontSize: 9 }} />{missing.length}
-              </span>
-            </Tooltip>
-          );
-        }
-        return (
-          <Tooltip title="MTD Compliant">
-            <span style={{ display: 'inline-flex', alignItems: 'center', background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#16a34a', borderRadius: 20, padding: '2px 8px', fontSize: 10, cursor: 'default' }}>
-              <CheckCircleOutlined />
-            </span>
-          </Tooltip>
         );
       },
     },
@@ -1266,11 +1206,6 @@ const PersonnelList = () => {
               <Button icon={<ReloadOutlined />} onClick={() => refetch()} loading={isLoading} size="small">
                 Refresh
               </Button>
-              <Tooltip title="Sync from BioTime 9.5 device data">
-                <Button icon={<ScanOutlined />} onClick={handleBioTimeSync} loading={syncing} size="small">
-                  BioTime Sync
-                </Button>
-              </Tooltip>
               <Button icon={<ExportOutlined />} onClick={handleExport} size="small">
                 Export
               </Button>
@@ -1346,9 +1281,9 @@ const PersonnelList = () => {
           <Option value="CONTRACTOR">Contractor</Option>
           <Option value="VISITOR">Visitor</Option>
         </Select>
-        {/* Zone filter */}
+        {/* Warehouse filter */}
         <Select
-          placeholder="Zone"
+          placeholder="Warehouse"
           style={{ flex: '1 1 120px', minWidth: 110, maxWidth: 160 }}
           value={filterZone}
           onChange={v => { setFilterZone(v); setPage(1); }}
@@ -1563,8 +1498,6 @@ const PersonnelList = () => {
                   onEdit={openEdit}
                   onDeactivate={(id) => deactivateMutation.mutate(id)}
                   onDelete={(id) => deleteMutation.mutate(id)}
-                  isNonCompliant={ncMap.has(e.id) && ncMap.get(e.id).length > 0}
-                  ncItems={ncMap.get(e.id)}
                 />
               ))}
             </div>
@@ -1715,7 +1648,7 @@ const PersonnelList = () => {
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item name="company" label="Company / Employer">
-                <Input disabled={hrLocked} placeholder="e.g. Marconi.ng EPC Limited" />
+                <Input disabled={hrLocked} placeholder="e.g. Acme Logistics Limited" />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -1748,7 +1681,7 @@ const PersonnelList = () => {
             </Col>
           </Row>
 
-          <Divider orientation="left"><Space><ApartmentOutlined style={{ color: '#7c3aed' }} />POB Status & Zone</Space></Divider>
+          <Divider orientation="left"><Space><ApartmentOutlined style={{ color: '#7c3aed' }} />POB Status & Warehouse</Space></Divider>
           <Row gutter={12}>
             <Col span={8}>
               <Form.Item name="personnel_type" label="Personnel Type" initialValue="STAFF">
@@ -1767,8 +1700,19 @@ const PersonnelList = () => {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="zone_id" label="Current Zone / Area">
-                <Select placeholder="Select zone" allowClear showSearch optionFilterProp="children" disabled={false}>
+              <Form.Item
+                name="warehouse_ids"
+                label="Assigned warehouses"
+                tooltip="Every warehouse this employee may clock in at. The first is their main site. Removing one stops them clocking in there."
+              >
+                <Select
+                  mode="multiple"
+                  placeholder="Select one or more warehouses"
+                  allowClear
+                  showSearch
+                  optionFilterProp="children"
+                  maxTagCount="responsive"
+                >
                   {zoneList.map(z => <Option key={z.id} value={z.id}>{z.name}</Option>)}
                 </Select>
               </Form.Item>

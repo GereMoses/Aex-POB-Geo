@@ -13,7 +13,7 @@ import {
   SafetyOutlined, AlertOutlined, FileTextOutlined, SettingOutlined,
   UserOutlined, LogoutOutlined, BellOutlined, MenuFoldOutlined,
   MenuUnfoldOutlined, LockOutlined, UsergroupAddOutlined, CalendarOutlined,
-  GlobalOutlined, BarChartOutlined, DollarOutlined, MedicineBoxOutlined,
+  GlobalOutlined, BarChartOutlined, DollarOutlined, MedicineBoxOutlined, AimOutlined,
   DownOutlined, CheckCircleOutlined, AppstoreOutlined,
   ApartmentOutlined, SwapOutlined, GiftOutlined, BookOutlined,
   StarOutlined, WarningOutlined, ToolOutlined,
@@ -60,7 +60,6 @@ const NAV_GROUPS = [
     label: 'OVERVIEW',
     items: [
       { key: '/dashboard',  icon: <DashboardOutlined />, label: 'Dashboard' },
-      { key: '/pob-status', icon: <BarChartOutlined />,  label: 'POB Status', permission: 'pob.view' },
     ],
   },
   {
@@ -102,25 +101,19 @@ const NAV_GROUPS = [
     label: 'OPERATIONS',
     items: [
       { key: '/attendance',          icon: <ClockCircleOutlined />, label: 'Attendance',            permission: 'attendance.view' },
-      { key: '/zones',               icon: <GlobalOutlined />,      label: 'Zones' },
-      { key: '/transport-manifest',  icon: <IdcardOutlined />,      label: 'Journey Management' },
-      { key: '/emergency-response',  icon: <AlertOutlined />,       label: 'Emergency & Mustering', permission: 'emergency.view' },
+      { key: '/geofence',            icon: <AimOutlined />,         label: 'Geofenced Attendance', permission: 'attendance.view' },
+      { key: '/zones',               icon: <GlobalOutlined />,      label: 'Warehouses' },
       // Hidden per Netcom walkthrough action #7 — MTD is outside client scope / duplicates existing systems:
-      // { key: '/mtd',                 icon: <MedicineBoxOutlined />, label: 'MTD' },
     ],
   },
   {
     label: 'SECURITY',
     items: [
-      { key: '/access-control', icon: <LockOutlined />,         label: 'Access Control', permission: 'access_control.view' },
-      { key: '/device',         icon: <DesktopOutlined />,       label: 'Devices',        permission: 'devices.view' },
-      { key: '/visitor',        icon: <UsergroupAddOutlined />,  label: 'Visitor',        permission: 'visitors.view' },
     ],
   },
   {
     label: 'ADMIN',
     items: [
-      { key: '/meeting',      icon: <CalendarOutlined />,        label: 'Meeting' },
       { key: '/reports',      icon: <FileTextOutlined />,        label: 'Reports',      permission: 'reports.view' },
       { key: '/settings',     icon: <SettingOutlined />,         label: 'Settings',     permission: 'settings.view' },
       { key: '/subscription', icon: <CrownOutlined />,           label: 'Subscription', globalAdminOnly: true },
@@ -130,14 +123,9 @@ const NAV_GROUPS = [
 
 const APP_TILES = [
   { key: '/dashboard',          icon: <DashboardOutlined />,    label: 'Dashboard',          color: '#0078D4', bg: '#EFF6FF' },
-  { key: '/pob-status',         icon: <BarChartOutlined />,     label: 'POB Status',         color: '#7C3AED', bg: '#F5F3FF', permission: 'pob.view' },
   { key: '/personnel',          icon: <TeamOutlined />,         label: 'Personnel',          color: '#047857', bg: '#ECFDF5', permission: 'personnel.view' },
   { key: '/attendance',         icon: <ClockCircleOutlined />,  label: 'Attendance',         color: '#B45309', bg: '#FFFBEB', permission: 'attendance.view' },
-  { key: '/zones',              icon: <GlobalOutlined />,       label: 'Zones',              color: '#0E7490', bg: '#ECFEFF' },
-  { key: '/emergency-response', icon: <AlertOutlined />,        label: 'Emergency & Muster', color: '#B91C1C', bg: '#FEF2F2', permission: 'emergency.view' },
-  { key: '/access-control',     icon: <LockOutlined />,         label: 'Access Control',     color: '#1D4ED8', bg: '#EFF6FF', permission: 'access_control.view' },
-  { key: '/device',             icon: <DesktopOutlined />,      label: 'Devices',            color: '#374151', bg: '#F9FAFB', permission: 'devices.view' },
-  { key: '/visitor',            icon: <UsergroupAddOutlined />, label: 'Visitors',           color: '#065F46', bg: '#ECFDF5', permission: 'visitors.view' },
+  { key: '/zones',              icon: <GlobalOutlined />,       label: 'Warehouses',              color: '#0E7490', bg: '#ECFEFF' },
   { key: '/reports',            icon: <FileTextOutlined />,     label: 'Reports',            color: '#92400E', bg: '#FFFBEB', permission: 'reports.view' },
   { key: '/settings',           icon: <SettingOutlined />,      label: 'Settings',           color: '#4B5563', bg: '#F3F4F6', permission: 'settings.view' },
 ];
@@ -1030,7 +1018,7 @@ const Layout = ({ user, onLogout, children }) => {
           borderBottom: `1px solid ${SIDEBAR.border}`,
           gap: 10, flexShrink: 0,
         }}>
-          <img src="/logo/image.png" alt="Marconi.ng EPC Limited"
+          <img src={`${process.env.PUBLIC_URL || ''}/logo/apex-mark.png`} alt="Apex POB"
             style={{ width: collapsed ? 32 : 36, height: collapsed ? 32 : 36,
               borderRadius: 6, objectFit: 'contain', flexShrink: 0, background: '#fff', padding: 2 }} />
           {!collapsed && (
@@ -1039,7 +1027,7 @@ const Layout = ({ user, onLogout, children }) => {
                 Apex POB
               </div>
               <div style={{ color: SIDEBAR.logoSubtext, fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                Marconi.ng EPC
+                Personnel On Board
               </div>
             </div>
           )}

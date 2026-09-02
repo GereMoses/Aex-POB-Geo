@@ -140,18 +140,6 @@ const Reports = () => {
   // Report categories with BioTime 9.5 structure
   const reportCategories = [
     {
-      key: 'pob_ops',
-      title: 'POB Operations',
-      icon: <GlobalOutlined />,
-      reports: [
-        { key: 'pob.daily_manifest',         title: 'Daily Manifest',           description: 'Current onboard personnel — who is on the platform right now, by zone and company' },
-        { key: 'pob.crew_change',            title: 'Crew Change',              description: 'Personnel who mobilized or demobilized on a given date' },
-        { key: 'pob.rotation_overdue',       title: 'Rotation Overdue',         description: 'Personnel who have exceeded their rotation threshold (default 28 days)' },
-        { key: 'pob.zone_occupancy_history', title: 'Zone Occupancy History',   description: 'Daily check-in and check-out counts per zone over a date range' },
-        { key: 'pob.headcount_by_company',   title: 'Headcount by Company',     description: 'Onboard headcount broken down by company, department and personnel type' },
-      ]
-    },
-    {
       key: 'personnel',
       title: 'Personnel',
       icon: <UserOutlined />,
@@ -181,54 +169,6 @@ const Reports = () => {
       ]
     },
     {
-      key: 'access_control',
-      title: 'Access Control',
-      icon: <SafetyCertificateOutlined />,
-      reports: [
-        { key: 'ac.events', title: 'Access Events', description: 'Door access event log' },
-        { key: 'ac.door_status', title: 'Door Status', description: 'Real-time door status monitoring' },
-        { key: 'ac.antipassback', title: 'Anti-Passback', description: 'Anti-passback violations' },
-        { key: 'ac.first_card', title: 'First Card', description: 'First card in/out tracking' },
-        { key: 'ac.inout_count', title: 'In/Out Count', description: 'Location occupancy tracking' },
-      ]
-    },
-    {
-      key: 'devices',
-      title: 'Devices',
-      icon: <IdcardOutlined />,
-      reports: [
-        { key: 'device.status', title: 'Device Status', description: 'Device health and connectivity' },
-        { key: 'device.transactions', title: 'Transaction Count', description: 'Device transaction volume' },
-        { key: 'device.offline', title: 'Offline History', description: 'Device offline periods' },
-        { key: 'device.firmware', title: 'Firmware Version', description: 'Device firmware management' },
-      ]
-    },
-    {
-      key: 'mustering',
-      title: 'Mustering',
-      icon: <TeamOutlined />,
-      reports: [
-        { key: 'muster.event', title: 'Event Report', description: 'POB mustering event report with compliance' },
-        { key: 'muster.drill_log', title: 'Drill Log', description: 'Emergency drill history' },
-        { key: 'muster.headcount', title: 'Headcount Timeline', description: 'Real-time headcount tracking' },
-        { key: 'muster.missing', title: 'Missing Persons', description: 'Missing person identification' },
-        { key: 'muster.compliance', title: 'Compliance %', description: 'Mustering compliance metrics' },
-        { key: 'muster.zone_performance', title: 'Zone Performance', description: 'Zone-specific performance' },
-      ]
-    },
-    {
-      key: 'emergency',
-      title: 'Emergency',
-      icon: <SafetyCertificateOutlined />,
-      reports: [
-        { key: 'emergency.events', title: 'Event Log', description: 'Emergency event audit trail' },
-        { key: 'emergency.lockdown', title: 'Lockdown Log', description: 'Emergency lockdown history' },
-        { key: 'emergency.siren', title: 'Siren Activation', description: 'Siren system activation log' },
-        { key: 'emergency.notification', title: 'Notification Delivery', description: 'Emergency notification tracking' },
-        { key: 'emergency.response', title: 'Response Time', description: 'Emergency response metrics' },
-      ]
-    },
-    {
       key: 'payroll',
       title: 'Payroll',
       icon: <FileTextOutlined />,
@@ -238,46 +178,8 @@ const Reports = () => {
         { key: 'pay.bank_sheet', title: 'Bank Sheet', description: 'Bank payment sheet export' },
         { key: 'pay.item_wise', title: 'Item-wise', description: 'Detailed payroll item breakdown' },
         { key: 'pay.variance', title: 'Variance', description: 'Payroll variance analysis' },
-        { key: 'pay.zone_cost', title: 'Zone Cost', description: 'POB zone cost analysis' },
+        { key: 'pay.zone_cost', title: 'Warehouse Cost', description: 'POB zone cost analysis' },
         { key: 'pay.contractor_cost', title: 'Contractor Cost', description: 'Contractor cost tracking' },
-      ]
-    },
-    {
-      key: 'visitor',
-      title: 'Visitor',
-      icon: <UserOutlined />,
-      reports: [
-        { key: 'visitor.daily_log', title: 'Daily Log', description: 'Daily visitor check-in/out log' },
-        { key: 'visitor.host_report', title: 'Host Report', description: 'Visitor reports by host' },
-        { key: 'visitor.overstay', title: 'Overstay', description: 'Visitors who overstayed welcome' },
-        { key: 'visitor.blacklist', title: 'Blacklist', description: 'Blacklisted visitor monitoring' },
-        { key: 'visitor.type_summary', title: 'Type Summary', description: 'Visitor type analysis' },
-        { key: 'visitor.induction', title: 'Induction Status', description: 'Safety induction tracking' },
-      ]
-    },
-    {
-      key: 'meeting',
-      title: 'Meeting',
-      icon: <TeamOutlined />,
-      reports: [
-        { key: 'meeting.utilization', title: 'Room Utilization', description: 'Meeting room usage analysis' },
-        { key: 'meeting.booking_log', title: 'Booking Log', description: 'Meeting booking history' },
-        { key: 'meeting.attendance', title: 'Attendance', description: 'Meeting attendance tracking' },
-        { key: 'meeting.noshow', title: 'No-Show', description: 'Meeting no-show analysis' },
-        { key: 'meeting.minutes', title: 'Minutes Status', description: 'Meeting minutes completion' },
-      ]
-    },
-    {
-      key: 'mtd',
-      title: 'MTD',
-      icon: <SafetyCertificateOutlined />,
-      reports: [
-        { key: 'mtd.cert_expiry', title: 'Cert Expiry', description: 'Certification expiry tracking' },
-        { key: 'mtd.medical_expiry', title: 'Medical Expiry', description: 'Medical certificate expiry' },
-        { key: 'mtd.ppe_issue', title: 'PPE Issue', description: 'PPE issuance tracking' },
-        { key: 'mtd.induction', title: 'Induction Status', description: 'Safety induction status' },
-        { key: 'mtd.compliance_matrix', title: 'Compliance Matrix', description: 'MTD compliance grid' },
-        { key: 'mtd.non_compliant', title: 'Non-Compliant', description: 'Non-compliant personnel list' },
       ]
     },
     {
@@ -290,17 +192,6 @@ const Reports = () => {
         { key: 'system.data_audit', title: 'Data Audit', description: 'Data change audit log' },
         { key: 'system.license_usage', title: 'License Usage', description: 'License utilization' },
         { key: 'system.api_usage', title: 'API Usage', description: 'API call statistics' },
-      ]
-    },
-    {
-      key: 'zone_security',
-      title: 'Zone Audit',
-      icon: <SafetyCertificateOutlined />,
-      reports: [
-        { key: 'zone.access_log',        title: 'Zone Access Log',       description: 'Full entry/exit history per zone — audit who accessed a zone and when' },
-        { key: 'zone.person_trail',       title: 'Person Movement Trail', description: 'Complete movement history for one person across all zones — track who entered, when, and how long they stayed' },
-        { key: 'zone.current_occupancy',  title: 'Current Occupancy',     description: 'Who is currently inside each zone right now' },
-        { key: 'zone.security_events',    title: 'Security Events',       description: 'Alarms, tamper alerts, anti-passback violations and duress events from zone devices' },
       ]
     },
   ];
@@ -383,7 +274,7 @@ const Reports = () => {
       if (response.ok) {
         const data = await response.json();
         const zList = Array.isArray(data) ? data : (data.results || data.zones || data.data || []);
-        setZones(zList.filter(z => z && z.id).map(z => ({ id: z.id, name: z.name || `Zone ${z.id}` })));
+        setZones(zList.filter(z => z && z.id).map(z => ({ id: z.id, name: z.name || `Warehouse ${z.id}` })));
       }
     } catch (error) {
       console.error('Error loading zones:', error);
@@ -1107,10 +998,10 @@ const Reports = () => {
                 </Select>
               </Col>
             )}
-            {/* Zone filter for manifest and occupancy history */}
+            {/* Warehouse filter for manifest and occupancy history */}
             {(isManifest || isOccHistory) && (
               <Col>
-                <Select placeholder="All Zones" style={{ width: 160 }} allowClear showSearch
+                <Select placeholder="All Warehouses" style={{ width: 160 }} allowClear showSearch
                   filterOption={(inp, opt) => opt.children.toLowerCase().includes(inp.toLowerCase())}
                   onChange={(v) => handleFilterChange('zone_id', v)}>
                   {zones.map(z => <Option key={z.id} value={z.id}>{z.name}</Option>)}

@@ -24,6 +24,21 @@ class UserCreate(BaseModel):
     is_active: bool = True
     role_ids: Optional[List[int]] = []
 
+class StaffProvisionRequest(BaseModel):
+    """Create app logins for personnel who do not have one yet."""
+    personnel_ids: Optional[List[int]] = Field(
+        None, description="Specific employees. Omit to provision every unprovisioned active employee.")
+    role_ids: Optional[List[int]] = Field(
+        None, description="Roles to grant each new account.")
+    password_mode: str = Field(
+        "random", description="'random' generates a unique password per account; "
+                              "'fixed' applies `password` to all of them.")
+    password: Optional[str] = Field(
+        None, description="Required when password_mode is 'fixed'.")
+    must_change_password: bool = Field(
+        True, description="Force a password change at first sign-in where supported.")
+
+
 class UserUpdate(BaseModel):
     email: Optional[str] = None
     first_name: Optional[str] = None
@@ -168,6 +183,198 @@ async def create_user(body: UserCreate, db: Session = Depends(get_db), current_u
         ), {"u": new_id, "r": role_id})
     db.commit()
     return dict(row._mapping)
+
+
+@router.get("/users/staff-access")
+async def staff_app_access(
+    db: Session = Depends(get_db), current_user=Depends(get_current_user)
+):
+    """
+    Every active employee with their app-login status and last sign-in.
+
+    The provisioning list alone answers "who still needs an account", which goes
+    empty the moment everyone has one. This answers the question an operator
+    actually asks day to day: who can get into the app, and who has actually
+    used it.
+    """
+    _require("settings.manage_users", current_user, db)
+    rows = db.execute(text("""
+        SELECT p.id AS personnel_id, p.emp_code,
+               COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p.first_name, p.last_name)), ''),
+                        p.full_name, p.emp_code) AS full_name,
+               d.name AS department,
+               u.id AS user_id, u.username, u.is_active AS login_active, u.last_login
+        FROM personnel p
+        LEFT JOIN departments d ON d.id = p.department_id
+        -- Case-insensitive: usernames are stored lowercased, emp_code is upper.
+        LEFT JOIN auth_user u ON LOWER(u.username) = LOWER(p.emp_code)
+        WHERE p.is_active IS TRUE
+        ORDER BY p.emp_code
+    """)).fetchall()
+
+    staff = [{
+        "personnel_id": r.personnel_id,
+        "emp_code": r.emp_code,
+        "full_name": r.full_name,
+        "department": r.department,
+        "has_login": r.user_id is not None,
+        "username": r.username,
+        "login_active": r.login_active,
+        "last_login": r.last_login.isoformat() if r.last_login else None,
+        "signed_in_before": r.last_login is not None,
+    } for r in rows]
+
+    return {
+        "success": True,
+        "total": len(staff),
+        "with_login": sum(1 for s in staff if s["has_login"]),
+        "signed_in": sum(1 for s in staff if s["signed_in_before"]),
+        "staff": staff,
+    }
+
+
+@router.get("/users/unprovisioned")
+async def list_unprovisioned_staff(
+    db: Session = Depends(get_db), current_user=Depends(get_current_user)
+):
+    """
+    Active employees with no app login.
+
+    Matched case-insensitively on emp_code, because usernames are stored
+    lowercased while emp_code is uppercase.
+    """
+    _require("settings.manage_users", current_user, db)
+    rows = db.execute(text("""
+        SELECT p.id, p.emp_code, p.first_name, p.last_name,
+               COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p.first_name, p.last_name)), ''),
+                        p.full_name, p.emp_code) AS full_name,
+               p.email, d.name AS department
+        FROM personnel p
+        LEFT JOIN departments d ON d.id = p.department_id
+        WHERE p.is_active IS TRUE
+          AND NOT EXISTS (
+              SELECT 1 FROM auth_user u
+              WHERE LOWER(u.username) = LOWER(p.emp_code)
+          )
+        ORDER BY p.emp_code
+    """)).fetchall()
+    return {"success": True, "count": len(rows),
+            "staff": [dict(r._mapping) for r in rows]}
+
+
+@router.post("/users/provision-staff", status_code=201)
+async def provision_staff_logins(
+    body: StaffProvisionRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Create app logins in bulk from personnel records.
+
+    Onboarding a warehouse previously meant importing staff, then creating each
+    login by hand in Settings > Users — impractical at hundreds of sites. This
+    provisions them straight from the personnel table, using emp_code as the
+    username so the punch endpoint can resolve the employee.
+
+    Existing accounts are skipped, never overwritten. Generated passwords are
+    returned ONCE in the response for distribution; they are not recoverable
+    afterwards, only resettable.
+    """
+    _require("settings.manage_users", current_user, db)
+
+    if body.password_mode not in ("random", "fixed"):
+        raise HTTPException(400, "password_mode must be 'random' or 'fixed'")
+    if body.password_mode == "fixed":
+        if not body.password:
+            raise HTTPException(400, "password is required when password_mode is 'fixed'")
+        try:
+            validate_password_strength(body.password, "staff")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    params = {}
+    sql = """
+        SELECT p.id, p.emp_code, p.first_name, p.last_name,
+               COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p.first_name, p.last_name)), ''),
+                        p.full_name, p.emp_code) AS full_name,
+               p.email
+        FROM personnel p
+        WHERE p.is_active IS TRUE
+          AND NOT EXISTS (
+              SELECT 1 FROM auth_user u
+              WHERE LOWER(u.username) = LOWER(p.emp_code)
+          )
+    """
+    if body.personnel_ids:
+        sql += " AND p.id = ANY(:ids)"
+        params["ids"] = body.personnel_ids
+    sql += " ORDER BY p.emp_code"
+
+    candidates = db.execute(text(sql), params).fetchall()
+    if not candidates:
+        return {"success": True, "created": 0, "skipped": 0, "accounts": [],
+                "message": "Every selected employee already has a login."}
+
+    import secrets
+    import string
+    # Excludes look-alike characters: these get read off a screen and typed on a
+    # phone keypad, so O/0 and l/1 confusion is a real support cost.
+    ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+
+    def _make_password() -> str:
+        # 14 chars clears the 12-char minimum with room to spare.
+        core = "".join(secrets.choice(ALPHABET) for _ in range(14))
+        # Guarantee the character classes the strength check expects.
+        return core[:-2] + secrets.choice(string.digits) + secrets.choice("!@#$%&*")
+
+    created, failed = [], []
+    for row in candidates:
+        pwd = body.password if body.password_mode == "fixed" else _make_password()
+        try:
+            first = row.first_name or row.emp_code
+            last = row.last_name or ""
+            new = db.execute(text("""
+                INSERT INTO auth_user
+                    (username, password, email, first_name, last_name,
+                     is_superuser, is_active)
+                VALUES (:u, :p, :e, :f, :l, FALSE, TRUE)
+                RETURNING id, username
+            """), {
+                "u": row.emp_code.lower(),   # stored lowercase; login is case-insensitive
+                "p": get_password_hash(pwd),
+                "e": row.email,
+                "f": first,
+                "l": last,
+            }).fetchone()
+
+            for rid in (body.role_ids or []):
+                db.execute(text(
+                    "INSERT INTO auth_user_role (user_id, role_id) VALUES (:u, :r) "
+                    "ON CONFLICT DO NOTHING"
+                ), {"u": new.id, "r": rid})
+
+            created.append({
+                "personnel_id": row.id,
+                "emp_code": row.emp_code,
+                "full_name": row.full_name,
+                "username": new.username,
+                # Shown once so the operator can hand it over; never stored in clear.
+                "password": pwd,
+            })
+        except Exception as e:
+            db.rollback()
+            failed.append({"emp_code": row.emp_code, "error": str(e)[:160]})
+
+    db.commit()
+    return {
+        "success": True,
+        "created": len(created),
+        "failed": len(failed),
+        "accounts": created,
+        "errors": failed,
+        "message": (f"{len(created)} login(s) created. Passwords are shown once — "
+                    f"export them now."),
+    }
 
 
 @router.get("/users/{user_id}")
@@ -481,7 +688,7 @@ async def get_audit_log(
         where.append("l.created_at >= :start_date")
         params["start_date"] = start_date
     if end_date:
-        where.append("l.created_at < :end_date::date + interval '1 day'")
+        where.append("l.created_at < CAST(:end_date AS date) + interval '1 day'")
         params["end_date"] = end_date
 
     cond = " AND ".join(where)

@@ -25,7 +25,6 @@ const TOOL_ROUTES = {
   get_onsite_personnel:     { label: 'View in Attendance', route: '/attendance' },
   get_attendance_summary:   { label: 'Open Attendance', route: '/attendance' },
   get_att_report:           { label: 'Open Attendance', route: '/attendance' },
-  get_pob_status:           { label: 'Open POB Status', route: '/pob-status' },
   get_departments:          { label: 'Open Departments', route: '/departments' },
   get_positions:            { label: 'Open Positions', route: '/positions' },
   get_personnel_list:       { label: 'Open Personnel', route: '/personnel' },
@@ -43,13 +42,9 @@ const TOOL_ROUTES = {
   get_expiring_items:       { label: 'Open Contractors', route: '/contractors' },
   get_contractor_status:    { label: 'Open Contractors', route: '/contractors' },
   get_visitor_summary:      { label: 'Open Visitors', route: '/visitors' },
-  get_zones_summary:        { label: 'Open Zones', route: '/zones' },
-  get_zones_detail:         { label: 'Open Zones', route: '/zones' },
-  get_access_control:       { label: 'Open Access Control', route: '/access-control' },
+  get_zones_summary:        { label: 'Open Warehouses', route: '/zones' },
+  get_zones_detail:         { label: 'Open Warehouses', route: '/zones' },
   get_emergency_events:     { label: 'Open Emergency', route: '/emergency' },
-  get_mustering:            { label: 'Open Mustering', route: '/mustering' },
-  get_devices:              { label: 'Open Devices', route: '/devices' },
-  get_transport:            { label: 'Open Transport', route: '/transport' },
   get_meeting_rooms:        { label: 'Open Meetings', route: '/meeting' },
   get_training:             { label: 'Open Training', route: '/personnel/training' },
   get_anomaly_alerts:       { label: 'Open Attendance', route: '/attendance' },
@@ -85,18 +80,14 @@ const SUGGESTION_CATEGORIES = [
     { text: 'Generate a daily briefing',             icon: '📋' },
     { text: 'POB status',                            icon: '🛢️' },
     { text: 'Transport schedule',                    icon: '✈️' },
-    { text: 'Meeting rooms',                         icon: '🏛️' },
   ]},
   { label: '🔐 Security', items: [
     { text: 'Any security anomalies this week?',     icon: '🔍' },
     { text: 'Access levels',                         icon: '🔐' },
-    { text: 'Emergency events',                      icon: '🚨' },
-    { text: 'Mustering & drills',                    icon: '🏃' },
   ]},
-  { label: '📡 Devices & Zones', items: [
+  { label: '📡 Devices & Warehouses', items: [
     { text: 'How many readers are online?',          icon: '📡' },
-    { text: 'Device status',                         icon: '🖥️' },
-    { text: 'Zone detail list',                      icon: '🗺️' },
+    { text: 'Warehouse detail list',                      icon: '🗺️' },
     { text: 'Personnel areas',                       icon: '📍' },
   ]},
   { label: '🏗️ Compliance', items: [
@@ -105,7 +96,6 @@ const SUGGESTION_CATEGORIES = [
     { text: 'Training courses',                      icon: '🎓' },
     { text: 'Disciplinary cases',                    icon: '⚖️' },
     { text: 'Performance appraisals',                icon: '📈' },
-    { text: 'Visitor approvals pending',             icon: '🪪' },
   ]},
 ];
 const INITIAL_SUGGESTIONS = SUGGESTION_CATEGORIES.flatMap(c => c.items).slice(0, 8);
@@ -279,10 +269,8 @@ const TOOL_LABELS = {
   get_attendance_summary: 'Pulling attendance records…', get_visitor_summary: 'Checking visitor logs…',
   get_anomaly_alerts: 'Scanning for anomalies…', search_personnel: 'Searching personnel…',
   get_leave_requests: 'Fetching leave requests…', get_pob_status: 'Getting POB status…',
-  get_zones_summary: 'Loading zone data…', get_departments: 'Loading departments…',
+  get_zones_summary: 'Loading warehouse data…', get_departments: 'Loading departments…',
   get_shifts: 'Loading shifts…', get_training: 'Loading training data…',
-  get_devices: 'Checking device status…', get_emergency_events: 'Checking emergency events…',
-  get_transport: 'Loading transport data…', get_att_report: 'Running attendance report…',
 };
 const ToolCard = ({ tool, isDark }) => (
   <div style={{

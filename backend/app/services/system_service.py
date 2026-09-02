@@ -532,8 +532,8 @@ class SystemService:
             current_users = self.db.query(User).filter(User.is_active == True).count()
             from ..models.personnel import Personnel
             current_employees = self.db.query(Personnel).filter(Personnel.is_active == True).count()
-            from ..models.device import Device
-            current_devices = self.db.query(Device).filter(Device.is_active == True).count()
+            # No physical devices in a mobile-only deployment.
+            current_devices = 0
             
             return {
                 "id": license.id,

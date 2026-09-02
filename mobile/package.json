@@ -1,0 +1,39 @@
+{
+  "name": "apex-pob-clock",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Apex POB geofenced time clock for warehouse staff",
+  "scripts": {
+    "android": "react-native run-android",
+    "ios": "react-native run-ios",
+    "start": "react-native start",
+    "lint": "eslint src",
+    "test": "jest"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-native": "0.76.6",
+    "react-native-device-info": "^14.0.1",
+    "react-native-geolocation-service": "^5.3.1",
+    "react-native-image-picker": "^7.2.3",
+    "react-native-keychain": "^9.2.2",
+    "react-native-safe-area-context": "^5.1.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.0",
+    "@babel/preset-env": "^7.25.0",
+    "@babel/runtime": "^7.25.0",
+    "@react-native/babel-preset": "0.76.6",
+    "@react-native/eslint-config": "0.76.6",
+    "@react-native/metro-config": "0.76.6",
+    "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "react-test-renderer": "18.3.1"
+  },
+  "jest": {
+    "preset": "react-native"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

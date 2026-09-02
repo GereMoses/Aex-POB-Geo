@@ -23,6 +23,8 @@ from ..services.attendance_predictive_service import attendance_predictive_servi
 from ..models.personnel import Personnel
 import logging
 
+from ..core.config import settings
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/attendance", tags=["attendance"])
@@ -1508,7 +1510,7 @@ async def punch_stream(request: Request):
     Authenticated via short-lived ticket (query param) issued by /auth/sse-ticket,
     since EventSource doesn't support Authorization headers.
     """
-    from ..services.zkteco.live_capture import add_subscriber, remove_subscriber
+    from ..services.punch_stream import add_subscriber, remove_subscriber
     from ..core.redis_client import get_redis_client as get_redis
 
     ticket = request.query_params.get("ticket")
@@ -1692,9 +1694,18 @@ async def get_transactions(
                    pa.area_name        AS area_name,
                    trm.alias           AS terminal_alias,
                    trm.reader_purpose  AS reader_purpose,
-                   MIN(t.punch_time) OVER (PARTITION BY t.emp_code, t.punch_time::date) AS _daily_first,
-                   MAX(t.punch_time) OVER (PARTITION BY t.emp_code, t.punch_time::date) AS _daily_last,
-                   COUNT(*)          OVER (PARTITION BY t.emp_code, t.punch_time::date) AS _daily_count
+                   -- First IN and last OUT of the LOCAL day, each restricted to
+                   -- the matching direction. Taking the earliest punch of any
+                   -- kind labelled a lone check-out as "First In"; partitioning
+                   -- on the UTC date also split a Lagos evening across two days.
+                   MIN(t.punch_time) FILTER (WHERE t.punch_state = 0)
+                       OVER (PARTITION BY t.emp_code,
+                             (t.punch_time AT TIME ZONE :tz)::date) AS _daily_first,
+                   MAX(t.punch_time) FILTER (WHERE t.punch_state = 1)
+                       OVER (PARTITION BY t.emp_code,
+                             (t.punch_time AT TIME ZONE :tz)::date) AS _daily_last,
+                   COUNT(*) OVER (PARTITION BY t.emp_code,
+                             (t.punch_time AT TIME ZONE :tz)::date) AS _daily_count
             FROM iclock_transaction t
             LEFT JOIN personnel p  ON (t.emp_code = p.emp_code OR t.emp_code = p.badge_id)
             LEFT JOIN personnel_employee pe ON t.emp_code = pe.emp_code AND p.id IS NULL
@@ -1713,7 +1724,7 @@ async def get_transactions(
             LEFT JOIN att_shift sh ON sh.id = latest_sched.shift_id
             WHERE (trm.reader_purpose IS NULL OR trm.reader_purpose = 'ATTENDANCE')
         """
-        params = {}
+        params = {"tz": settings.TIMEZONE}
 
         if search:
             query += """
@@ -1815,8 +1826,15 @@ async def get_transactions(
             daily_last  = row.pop('_daily_last',  None)
             daily_count = int(row.pop('_daily_count', 1) or 1)
             pt = row.get('punch_time')
-            row['is_first_in'] = bool(pt is not None and daily_first is not None and pt == daily_first)
-            row['is_last_out'] = bool(pt is not None and daily_last  is not None and pt == daily_last and daily_count > 1)
+            state = row.get('punch_state')
+            # Direction must match the badge: only a check-in can be the first
+            # in, only a check-out can be the last out.
+            row['is_first_in'] = bool(
+                pt is not None and daily_first is not None
+                and pt == daily_first and state == 0)
+            row['is_last_out'] = bool(
+                pt is not None and daily_last is not None
+                and pt == daily_last and state == 1 and daily_count > 1)
             transactions.append(row)
 
         return {
@@ -2335,28 +2353,6 @@ async def update_attendance_rules(
 
 # Enhanced Analytics Endpoints
 
-@router.get("/analytics/anomalies/{emp_id}")
-async def get_employee_anomalies(
-    emp_id: int,
-    start_date: str = Query(...),
-    end_date: str = Query(...),
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """Get anomaly detection results for an employee"""
-    try:
-        start_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
-        end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
-        
-        anomalies = await attendance_anomaly_service.detect_employee_anomalies(
-            emp_id, start_dt, end_dt, db
-        )
-        
-        return {"success": True, "data": anomalies}
-    except Exception as e:
-        logger.error(f"Error getting employee anomalies: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get anomalies: {str(e)}")
-
 @router.get("/analytics/anomalies/team")
 async def get_team_anomalies(
     emp_ids: List[int] = Query(...),
@@ -2378,6 +2374,28 @@ async def get_team_anomalies(
     except Exception as e:
         logger.error(f"Error getting team anomalies: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get team anomalies: {str(e)}")
+
+@router.get("/analytics/anomalies/{emp_id}")
+async def get_employee_anomalies(
+    emp_id: int,
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Get anomaly detection results for an employee"""
+    try:
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
+        
+        anomalies = await attendance_anomaly_service.detect_employee_anomalies(
+            emp_id, start_dt, end_dt, db
+        )
+        
+        return {"success": True, "data": anomalies}
+    except Exception as e:
+        logger.error(f"Error getting employee anomalies: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get anomalies: {str(e)}")
 
 @router.get("/analytics/forecast")
 async def get_attendance_forecast(

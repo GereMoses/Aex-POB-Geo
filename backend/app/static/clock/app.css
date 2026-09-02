@@ -1,0 +1,75 @@
+:root{--bg:#0F172A;--surface:#1E293B;--border:#334155;--text:#F8FAFC;
+        --muted:#94A3B8;--ok:#10B981;--warn:#F59E0B;--bad:#EF4444;--accent:#0EA5E9}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+       padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom))}
+  .wrap{max-width:520px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 2px}
+  .muted{color:var(--muted);font-size:13px}
+  .card{border-radius:16px;padding:20px;border:2px solid var(--border);background:var(--surface);
+        text-align:center;margin:16px 0}
+  .card.ok{background:rgba(16,185,129,.12);border-color:var(--ok)}
+  .card.warn{background:rgba(245,158,11,.12);border-color:var(--warn)}
+  .site{font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--muted)}
+  .headline{font-size:19px;font-weight:600;margin:6px 0}
+  button{width:100%;border:0;border-radius:16px;color:#fff;font-size:22px;font-weight:700;
+         padding:26px;margin-top:12px;cursor:pointer}
+  button:disabled{opacity:.35}
+  .in{background:var(--ok)} .out{background:var(--accent)}
+  input,textarea{width:100%;padding:14px;border-radius:10px;border:1px solid var(--border);
+        background:var(--surface);color:var(--text);font-size:16px;margin-bottom:10px}
+  .row{display:flex;gap:10px} .row>*{flex:1}
+  .banner{border-radius:10px;padding:12px;margin:12px 0;font-size:14px}
+  .banner.bad{background:rgba(239,68,68,.15);border:1px solid var(--bad)}
+  .banner.info{background:rgba(14,165,233,.12);border:1px solid var(--accent)}
+  .hide{display:none}
+  video,canvas{width:100%;border-radius:12px;background:#000}
+  .link{background:none;border:0;color:var(--muted);font-size:14px;padding:8px;font-weight:400}
+
+  .topbar{display:flex;justify-content:space-between;align-items:center}
+  .link.auto{width:auto}
+  button.small{font-size:17px;padding:16px}
+  .footnote{text-align:center;margin-top:20px}
+
+/* ── Identity ─────────────────────────────────────────────────────────────── */
+.who { margin: -4px 0 14px; }
+.who-name { font-size: 17px; font-weight: 700; color: #e2e8f0; }
+.who-id { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #64748b; }
+
+/* ── Assigned warehouses ──────────────────────────────────────────────────── */
+.assigned { margin-top: 18px; }
+.assigned-title { font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
+                  color: #64748b; margin-bottom: 8px; }
+.site-row { background: #16233a; border: 1px solid #24334d; border-radius: 10px;
+            padding: 12px 14px; margin-bottom: 8px; }
+.site-row.here { border-color: #10b981; background: #10281f; }
+.site-row .nm { font-weight: 600; color: #e2e8f0; font-size: 15px; }
+.site-row .co { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 12px; color: #94a3b8; margin-top: 4px; }
+.site-row .dd { font-size: 12px; color: #64748b; margin-top: 3px; }
+.site-row .dd b { color: #10b981; font-weight: 600; }
+.site-row .dd i { color: #f59e0b; font-style: normal; font-weight: 600; }
+.coords { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 12px; color: #94a3b8; margin-top: 6px; }
+
+/* ── Brand ────────────────────────────────────────────────────────────────── */
+.brand { display:block; width:76px; height:76px; margin:0 auto 14px; border-radius:16px; }
+.brand-sm { width:28px; height:28px; border-radius:6px; margin-right:8px; }
+
+/* ── Password reveal ──────────────────────────────────────────────────────── */
+.pw { position:relative; }
+.pw input { padding-right:74px; }
+.pw-eye {
+  position:absolute; right:8px; top:50%; transform:translateY(-50%);
+  background:transparent; border:0; color:#7dd3fc; font-size:13px; font-weight:600;
+  padding:6px 10px; width:auto; margin:0; cursor:pointer;
+}
+
+/* Topbar: brand on the left, actions on the right. The title must not wrap —
+   at 390px with a logo and two buttons it otherwise breaks onto a second line
+   and collides with the refresh label. */
+.topbar { gap:8px; }
+.brandline { display:flex; align-items:center; min-width:0; }
+.brandline h1 { margin:0; font-size:19px; white-space:nowrap; }
+.actions { display:flex; align-items:center; gap:2px; flex-shrink:0; }
+.actions .link { padding:8px 6px; font-size:13px; }

@@ -42,7 +42,6 @@ _sse_lock = asyncio.Lock()
 
 _SSE_CHANNEL = "pob:sse_broadcast"
 
-
 async def broadcast_notification(payload: dict) -> None:
     """
     Publish a notification to the Redis Pub/Sub channel so all workers deliver it.
@@ -60,7 +59,6 @@ async def broadcast_notification(payload: dict) -> None:
 
     # Local fallback (single-worker or Redis down)
     await _deliver_local(payload)
-
 
 async def _deliver_local(payload: dict) -> None:
     """Route a payload to local SSE queues, respecting user scope."""
@@ -85,7 +83,6 @@ async def _deliver_local(payload: dict) -> None:
                 _sse_clients[uid].difference_update(dead_qs)
                 if not _sse_clients[uid]:
                     del _sse_clients[uid]
-
 
 async def start_redis_subscriber() -> None:
     """
@@ -116,7 +113,6 @@ async def start_redis_subscriber() -> None:
             logger.warning("SSE Redis subscriber disconnected (%s) — reconnecting in 5s", exc)
             await asyncio.sleep(5)
 
-
 def notify_sync(payload: dict) -> None:
     """Thread-safe wrapper for broadcasting from sync code / Celery tasks."""
     try:
@@ -125,7 +121,6 @@ def notify_sync(payload: dict) -> None:
             asyncio.run_coroutine_threadsafe(broadcast_notification(payload), loop)
     except Exception:
         pass
-
 
 # ── notification generators ───────────────────────────────────────────────────
 
@@ -141,6 +136,91 @@ def _upsert(db: Session, dedup_key: str, notification_type: str,
     """), {"dk": dedup_key, "nt": notification_type, "title": title,
            "msg": message, "pri": priority, "link": link, "exp": expires_at})
 
+# Signals that indicate someone tried to defeat the location check, as opposed
+# to a weak GPS fix or a badly placed fence. Only these warrant an alert —
+# paging a supervisor every time somebody's signal drops under a steel roof is
+# how alerting gets muted.
+_TAMPERING_REASONS = (
+    "MOCK_LOCATION", "EMULATOR", "ATTESTATION_FAILED", "IMPOSSIBLE_TRAVEL",
+    "APPROACH_TELEPORT", "COMPOSITE_RISK",
+)
+
+
+def _check_geofence_tampering(db: Session) -> None:
+    """Alert on a fresh attempt to spoof a clock-in."""
+    rows = db.execute(text("""
+        SELECT e.emp_code, e.reason, z.name AS site,
+               COALESCE(p.first_name || ' ' || p.last_name, e.emp_code) AS who
+        FROM mobile_punch_evidence e
+        LEFT JOIN zones z     ON z.id = e.zone_id
+        LEFT JOIN personnel p ON p.emp_code = e.emp_code
+        WHERE e.decision = 'REJECTED'
+          AND e.reason = ANY(:reasons)
+          AND e.server_time > NOW() - INTERVAL '1 hour'
+        ORDER BY e.server_time DESC
+        LIMIT 10
+    """), {"reasons": list(_TAMPERING_REASONS)}).fetchall()
+    for r in rows:
+        # Deduplicated per person per hour: someone retrying a spoofing app
+        # five times is one alert, not five.
+        hour = datetime.now(timezone.utc).strftime("%Y%m%d%H")
+        _upsert(db, f"geofence-tamper-{r.emp_code}-{hour}",
+                "critical",
+                "Suspected clock-in tampering",
+                f"{r.who} was blocked at {r.site or 'an unknown warehouse'} "
+                f"({r.reason.replace('_', ' ').lower()}).",
+                "high", "/geofence", expires_hours=72)
+
+
+def _check_geofence_repeat_blocks(db: Session) -> None:
+    """Alert on somebody blocked on several separate days."""
+    today_str = date.today().isoformat()
+    rows = db.execute(text("""
+        SELECT e.emp_code,
+               COUNT(DISTINCT DATE(e.server_time)) AS days,
+               COALESCE(p.first_name || ' ' || p.last_name, e.emp_code) AS who
+        FROM mobile_punch_evidence e
+        LEFT JOIN personnel p ON p.emp_code = e.emp_code
+        WHERE e.decision = 'REJECTED'
+          AND e.server_time > NOW() - INTERVAL '7 days'
+        GROUP BY e.emp_code, p.first_name, p.last_name
+        HAVING COUNT(DISTINCT DATE(e.server_time)) >= 3
+        ORDER BY days DESC
+        LIMIT 10
+    """)).fetchall()
+    for r in rows:
+        # Counted by distinct days, so one bad morning of retries never trips
+        # this — it takes a genuine pattern.
+        _upsert(db, f"geofence-repeat-{r.emp_code}-{today_str}",
+                "warning",
+                "Repeated failed clock-ins",
+                f"{r.who} has been blocked from clocking in on {r.days} separate "
+                f"days this week. This is either fraud or a badly placed fence — "
+                f"check the warehouse boundary before escalating.",
+                "medium", "/geofence", expires_hours=24)
+
+
+def _check_unassigned_staff(db: Session) -> None:
+    """Alert while any active employee has no warehouse — they cannot clock in at all."""
+    today_str = date.today().isoformat()
+    count = db.execute(text("""
+        SELECT COUNT(*) FROM personnel p
+        WHERE p.is_active IS TRUE
+          AND NOT EXISTS (
+              SELECT 1 FROM zone_personnel_assignments zpa
+              WHERE zpa.personnel_id = p.id
+                AND zpa.status = 'ACTIVE' AND zpa.unassigned_at IS NULL
+          )
+    """)).scalar() or 0
+    if not count:
+        return
+    _upsert(db, f"geofence-unassigned-{today_str}",
+            "warning",
+            f"{count} employee{'s' if count > 1 else ''} cannot clock in",
+            f"{count} active employee{'s have' if count > 1 else ' has'} no warehouse "
+            f"assignment, so every clock-in attempt will be refused.",
+            "high", "/geofence", expires_hours=12)
+
 
 def _run_check(db: Session, fn):
     """Run a single generator check in an isolated savepoint so failures don't abort the transaction."""
@@ -151,7 +231,6 @@ def _run_check(db: Session, fn):
     except Exception as e:
         sp.rollback()
         logger.debug(f"Notification check skipped: {e}")
-
 
 def _check_subscription(db: Session) -> None:
     today_str = date.today().isoformat()
@@ -188,27 +267,6 @@ def _check_subscription(db: Session) -> None:
                 f"Your licence expires on {sub[0]} ({days} days remaining).",
                 "medium", "/subscription", expires_hours=48)
 
-
-def _check_offline_devices(db: Session) -> None:
-    today_str = date.today().isoformat()
-    offline = db.execute(text("""
-        SELECT COALESCE(NULLIF(alias, ''), sn) AS name, sn FROM iclock_terminal
-        WHERE last_activity IS NOT NULL
-          AND last_activity < NOW() - make_interval(secs =>
-                GREATEST(COALESCE(heartbeat_interval, 30) * 5, 300)::float)
-        LIMIT 10
-    """)).fetchall()
-    if not offline:
-        return
-    names = ", ".join(r[0] for r in offline)
-    count = len(offline)
-    _upsert(db, f"devices-offline-{today_str}",
-            "warning",
-            f"{count} Device{'s' if count > 1 else ''} Offline",
-            f"The following reader{'s are' if count > 1 else ' is'} not responding: {names}.",
-            "high", "/device", expires_hours=4)
-
-
 def _check_recent_punches(db: Session) -> None:
     recent = db.execute(text("""
         SELECT COUNT(*) AS c FROM iclock_transaction
@@ -221,46 +279,6 @@ def _check_recent_punches(db: Session) -> None:
             f"{recent[0]} New Attendance Record{'s' if recent[0] > 1 else ''}",
             f"{recent[0]} punch record{'s' if recent[0] > 1 else ''} received in the last 15 minutes.",
             "low", "/attendance", expires_hours=1)
-
-
-def _check_pob_summary(db: Session) -> None:
-    today_str = date.today().isoformat()
-    pob = db.execute(text("""
-        SELECT COUNT(*) AS c FROM personnel
-        WHERE is_onboard = TRUE AND is_active = TRUE
-    """)).fetchone()
-    if not pob or pob[0] == 0:
-        return
-    _upsert(db, f"pob-summary-{today_str}", "info",
-            "Daily POB Summary",
-            f"{pob[0]} personnel currently onboard.",
-            "low", "/pob-status", expires_hours=24)
-
-
-def _check_mtd_certifications(db: Session) -> None:
-    today_str = date.today().isoformat()
-    # Expired certs
-    expired = db.execute(text("""
-        SELECT COUNT(*) AS c FROM mtd_certification
-        WHERE expiry_date IS NOT NULL AND expiry_date < CURRENT_DATE
-    """)).fetchone()
-    if expired and expired[0] > 0:
-        _upsert(db, f"mtd-expired-{today_str}", "error",
-                f"{expired[0]} Certification{'s' if expired[0] > 1 else ''} Expired",
-                f"{expired[0]} MTD certification{'s have' if expired[0] > 1 else ' has'} passed their expiry date and require immediate renewal.",
-                "critical", "/mtd", expires_hours=24)
-    # Expiring within 30 days
-    expiring = db.execute(text("""
-        SELECT COUNT(*) AS c FROM mtd_certification
-        WHERE expiry_date IS NOT NULL
-          AND expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30
-    """)).fetchone()
-    if expiring and expiring[0] > 0:
-        _upsert(db, f"mtd-expiring-30d-{today_str}", "warning",
-                f"{expiring[0]} Certification{'s' if expiring[0] > 1 else ''} Expiring Soon",
-                f"{expiring[0]} MTD certification{'s expire' if expiring[0] > 1 else ' expires'} within the next 30 days.",
-                "high", "/mtd", expires_hours=24)
-
 
 def _check_medical_records(db: Session) -> None:
     today_str = date.today().isoformat()
@@ -284,7 +302,6 @@ def _check_medical_records(db: Session) -> None:
                 f"{due_soon[0]} personnel medical examination{'s are' if due_soon[0] > 1 else ' is'} due within 30 days.",
                 "medium", "/mtd", expires_hours=24)
 
-
 def _check_employment_contracts(db: Session) -> None:
     today_str = date.today().isoformat()
     expiring = db.execute(text("""
@@ -299,7 +316,6 @@ def _check_employment_contracts(db: Session) -> None:
                 f"{expiring[0]} employment contract{'s expire' if expiring[0] > 1 else ' expires'} within the next 30 days.",
                 "high", "/personnel", expires_hours=24)
 
-
 def _check_pending_leave(db: Session) -> None:
     today_str = date.today().isoformat()
     pending = db.execute(text("""
@@ -312,62 +328,16 @@ def _check_pending_leave(db: Session) -> None:
                 f"{pending[0]} leave request{'s require' if pending[0] > 1 else ' requires'} your approval.",
                 "medium", "/attendance", expires_hours=24)
 
-
-def _check_access_denied(db: Session) -> None:
-    """Notify on repeated access-denied events in the last hour (possible forced entry)."""
-    today_str = date.today().isoformat()
-    denied = db.execute(text("""
-        SELECT COUNT(*) AS c FROM iclock_transaction
-        WHERE punch_time > NOW() - INTERVAL '1 hour'
-          AND (status = 4 OR status = 5)
-    """)).fetchone()
-    if denied and denied[0] >= 5:
-        bucket = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H')
-        _upsert(db, f"access-denied-{bucket}", "warning",
-                f"Access Denied Alert — {denied[0]} Events",
-                f"{denied[0]} access-denied events recorded in the last hour. Possible unauthorised access attempt.",
-                "high", "/access-control", expires_hours=2)
-
-
-def _check_pob_zone_discrepancy(db: Session) -> None:
-    """Alert when is_onboard=True but current_zone_id=NULL for >4 hours.
-    This catches the transport-departure data gap where a passenger was confirmed
-    OUTBOUND but their biometric zone was never cleared (no gangway reader, or
-    reader has no zone_id configured). Without this check, the POB count is
-    inflated and the next muster expected list will include departed personnel.
-    """
-    bucket = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H')
-    stale = db.execute(text("""
-        SELECT COUNT(*) AS c FROM personnel
-        WHERE is_onboard = TRUE
-          AND is_active = TRUE
-          AND current_zone_id IS NULL
-          AND updated_at < NOW() - INTERVAL '4 hours'
-    """)).fetchone()
-    if stale and stale[0] > 0:
-        _upsert(db, f"pob-zone-discrepancy-{bucket}", "warning",
-                f"POB Discrepancy — {stale[0]} Personnel Onboard With No Zone",
-                (
-                    f"{stale[0]} personnel are marked onboard (is_onboard=TRUE) but have "
-                    f"no zone location on record for over 4 hours. They may have departed "
-                    f"without a biometric exit scan, causing an inflated POB count. "
-                    f"Review transport manifests and access control logs."
-                ),
-                "high", "/pob-status", expires_hours=4)
-
-
 def _generate_notifications(db: Session) -> None:
     """Run all generators, each in an isolated savepoint."""
     _run_check(db, _check_subscription)
-    _run_check(db, _check_offline_devices)
     _run_check(db, _check_recent_punches)
-    _run_check(db, _check_pob_summary)
-    _run_check(db, _check_pob_zone_discrepancy)
-    _run_check(db, _check_mtd_certifications)
     _run_check(db, _check_medical_records)
     _run_check(db, _check_employment_contracts)
     _run_check(db, _check_pending_leave)
-    _run_check(db, _check_access_denied)
+    _run_check(db, _check_geofence_tampering)
+    _run_check(db, _check_geofence_repeat_blocks)
+    _run_check(db, _check_unassigned_staff)
     # Purge expired
     try:
         db.execute(text(
@@ -377,7 +347,6 @@ def _generate_notifications(db: Session) -> None:
     except Exception as e:
         logger.debug(f"Notification purge failed: {e}")
         db.rollback()
-
 
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
@@ -403,7 +372,6 @@ async def notification_stats(
         }}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.get("/")
 async def list_notifications(
@@ -494,7 +462,6 @@ async def list_notifications(
         logger.error(f"list_notifications error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @router.put("/mark-all-read")
 async def mark_all_read(
     db: Session = Depends(get_db),
@@ -513,7 +480,6 @@ async def mark_all_read(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.put("/{notification_id}/read")
 async def mark_one_read(
@@ -534,7 +500,6 @@ async def mark_one_read(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @router.delete("/{notification_id}")
 async def delete_notification(
     notification_id: int,
@@ -552,7 +517,6 @@ async def delete_notification(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # ── SSE streaming endpoint ────────────────────────────────────────────────────
 
@@ -601,7 +565,6 @@ async def notification_stream(
             "X-Accel-Buffering": "no",
         },
     )
-
 
 @router.post("/broadcast")
 async def broadcast_manual(

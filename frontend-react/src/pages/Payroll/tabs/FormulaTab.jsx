@@ -24,9 +24,9 @@ const VARIABLES = [
   { name: 'OTHours',        desc: 'Overtime hours',                    example: 'OTHours * 500'                        },
   { name: 'LateMinutes',    desc: 'Late minutes total',                example: 'LateMinutes * 50'                     },
   { name: 'WorkHours',      desc: 'Total hours worked',                example: 'WorkHours'                            },
-  { name: 'ZoneHours',      desc: 'Hours in POB zones',                example: 'ZoneHours * 300'                      },
+  { name: 'ZoneHours',      desc: 'Hours on site at a warehouse',                example: 'ZoneHours * 300'                      },
   { name: 'NightHours',     desc: 'Night-shift hours',                 example: 'NightHours * 200'                     },
-  { name: 'HazardDays',     desc: 'Days in hazard zones',              example: 'HazardDays * 1500'                    },
+  { name: 'HazardDays',     desc: 'Days at a hazard-rated warehouse',              example: 'HazardDays * 1500'                    },
   { name: 'ContractorFlag', desc: '1 if contractor, 0 if staff',       example: 'IF(ContractorFlag, Basic * 1.2, Basic)'},
 ];
 
@@ -47,7 +47,7 @@ const SNIPPETS = [
   { label: 'OT Pay (1.5x)',             formula: 'ROUND(OTHours * (Basic / 160) * 1.5, 2)'                     },
   { label: 'Late Deduction',            formula: 'ROUND(LateMinutes * (Basic / (WorkDays * 480)), 2)'          },
   { label: 'Absence Deduction',         formula: 'ROUND(Basic / WorkDays * AbsentDays, 2)'                     },
-  { label: 'Zone Allowance',            formula: 'ROUND(ZoneHours * 300 + NightHours * 200 + HazardDays * 1500, 2)' },
+  { label: 'Warehouse Allowance',            formula: 'ROUND(ZoneHours * 300 + NightHours * 200 + HazardDays * 1500, 2)' },
   { label: 'Pension (8% of Gross)',      formula: 'ROUND(Basic * 0.08, 2)'                                      },
   { label: 'Contractor Rate Premium',   formula: 'IF(ContractorFlag, Basic * 0.15, 0)'                         },
 ];

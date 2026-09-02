@@ -113,8 +113,25 @@ rate_limiter = RateLimiter()
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Rate limiting middleware for FastAPI"""
 
-    # Auth endpoints get a much stricter limit than the general API.
+    # Only endpoints that VERIFY CREDENTIALS get the strict limit — those are what
+    # brute-force protection is for. Session-read endpoints such as /auth/me and
+    # /auth/sse-ticket are called by the SPA on every page load, so including them
+    # here burned the whole auth budget in a handful of page views and logged the
+    # user out mid-session. They fall under the general API limit instead.
+    _AUTH_SUFFIXES = (
+        "login", "token", "refresh", "logout",
+        "production-login", "simple-login",
+        "mfa", "mfa/verify", "verify-mfa",
+        "password-reset", "forgot-password", "reset-password", "change-password",
+    )
     _AUTH_PREFIXES = ("/api/auth/", "/api/v1/auth/")
+
+    def _is_credential_endpoint(self, path: str) -> bool:
+        for prefix in self._AUTH_PREFIXES:
+            if path.startswith(prefix):
+                tail = path[len(prefix):].strip("/")
+                return tail in self._AUTH_SUFFIXES
+        return False
 
     def __init__(self, app, calls: int = 100, period: int = 60,
                  auth_calls: int = None, auth_period: int = None):
@@ -133,7 +150,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Apply the stricter auth limit to login/refresh/MFA endpoints.
         path = request.url.path
-        if any(path.startswith(p) for p in self._AUTH_PREFIXES):
+        if self._is_credential_endpoint(path):
             limit, window = self.auth_calls, self.auth_period
             scope = "auth"
         else:
